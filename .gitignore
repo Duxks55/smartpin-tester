@@ -1,0 +1,6 @@
+__pycache__/
+build/
+dist/
+*.spec
+backend.log
+component_tester_env/
