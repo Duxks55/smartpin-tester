@@ -2,8 +2,8 @@
 cd /home/tpj655/smartpin-tester
 
 echo "Stopping existing application instances..."
-pkill -f smartpin_master
-pkill -f python3
+sudo pkill -f smartpin_master
+sudo pkill -f python3
 
 echo "Pulling latest changes from GitHub..."
 git pull origin main
@@ -16,6 +16,5 @@ pip install -r requirements.txt --quiet
 
 echo "Update applied successfully! Launching application..."
 
-# Launch the app directly using Python to bypass binary file-locking issues entirely
 export DISPLAY=:0
 python3 smartpin_master.py &
