@@ -4,3 +4,7 @@ dist/
 *.spec
 backend.log
 component_tester_env/
+build/
+dist/
+_internal/
+smartpin_master
