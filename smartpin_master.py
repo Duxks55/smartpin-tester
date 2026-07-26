@@ -250,24 +250,29 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.scan_wifi).pack(anchor="w")
 
     def perform_ota_update(self):
-        self.update_status_lbl.config(text="Status: Fetching & applying update...", fg="#f59e0b")
+        self.update_status_lbl.config(text="Status: Launching update script...", fg="#f59e0b")
         self.update_idletasks()
 
-        # Use absolute path pointing directly to your home directory script
         script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
 
         try:
-            # Launch update script in an independent detached session
+            # Spawn the update script inside a visible terminal (lxterminal) 
+            # so it executes properly with full user permissions and displays progress
             subprocess.Popen(
-                ["bash", script_path],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                ["lxterminal", "-e", f"bash {script_path}"],
                 start_new_session=True
             )
         except Exception as e:
-            print(f"Failed to launch update script: {e}")
+            try:
+                # Fallback to xterm if lxterminal isn't available
+                subprocess.Popen(
+                    ["xterm", "-e", f"bash {script_path}"],
+                    start_new_session=True
+                )
+            except Exception as ex:
+                print(f"Failed to launch terminal: {ex}")
 
-        # Gracefully exit app to release file locks so the update script can overwrite the binary
+        # Exit the application to release file locks so the script can safely overwrite/update
         self.after(1500, lambda: os._exit(0))
 
     def scan_wifi(self):
