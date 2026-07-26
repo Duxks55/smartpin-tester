@@ -4,6 +4,7 @@ import subprocess
 import threading
 import os
 import time
+import sys
 
 # Attempt to load hardware libraries gracefully (prevents crashing if tested on a non-Pi PC)
 try:
@@ -252,46 +253,22 @@ class SettingsView(tk.Frame):
         self.update_status_lbl.config(text="Status: Fetching & applying update...", fg="#f59e0b")
         self.update_idletasks()
 
-        script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
+        # Use absolute path pointing directly to your home directory script
+        script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
 
-        # Launch update script in the background
-        subprocess.Popen(
-            ["nohup", "bash", script_path],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            preexec_fn=os.setsid
-        )
-
-        # Exit the app so files unlock, allowing update_kiosk.sh to rebuild.
-        # The kiosk loop will pause, let it build, and restart the new app automatically!
-        self.after(1500, lambda: os._exit(0))
-
-    def run_update_thread():
         try:
-            script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
-
-            # Run the bash update script directly using bash
-            process = subprocess.Popen(["bash", script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            stdout, stderr = process.communicate()
-
-            if process.returncode != 0:
-                raise Exception(stderr.strip() or stdout.strip() or "Update script failed.")
-
-            # Success callback
-            self.after(0, lambda: self.update_status_lbl.config(text="Status: Update successful! Restarting...", fg="#10b981"))
-            self.after(1000, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting application..."))
-
-            # Restart the kiosk application
-            launch_script = os.path.expanduser("~/smartpin-tester/kiosk_launch.sh")
-            if os.path.exists(launch_script):
-                subprocess.Popen([launch_script])
-
-            self.after(1500, lambda: os._exit(0))
+            # Launch update script in an independent detached session
+            subprocess.Popen(
+                ["bash", script_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True
+            )
         except Exception as e:
-            err_str = str(e)
-            self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Failed ({err_str})", fg="#ef4444"))
-                
-        threading.Thread(target=run_update_thread, daemon=True).start()
+            print(f"Failed to launch update script: {e}")
+
+        # Gracefully exit app to release file locks so the update script can overwrite the binary
+        self.after(1500, lambda: os._exit(0))
 
     def scan_wifi(self):
         try:
