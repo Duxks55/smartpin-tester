@@ -254,7 +254,7 @@ class SettingsView(tk.Frame):
 
         script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
 
-        # Launch update script detached in the background using nohup so it runs independently
+        # Launch update script in the background
         subprocess.Popen(
             ["nohup", "bash", script_path],
             stdout=subprocess.DEVNULL,
@@ -262,8 +262,10 @@ class SettingsView(tk.Frame):
             preexec_fn=os.setsid
         )
 
-        # Give it a brief moment, then exit the app so files unlock and rebuild can complete
+        # Exit the app so files unlock, allowing update_kiosk.sh to rebuild.
+        # The kiosk loop will pause, let it build, and restart the new app automatically!
         self.after(1500, lambda: os._exit(0))
+
     def run_update_thread():
         try:
             script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
