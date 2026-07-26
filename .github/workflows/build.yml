@@ -1,0 +1,31 @@
+name: Build SmartPin Binary
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller adafruit-blinka adafruit-circuitpython-ads1x15
+
+      - name: Build with PyInstaller
+        run: |
+          pyinstaller --onedir --noconsole --collect-all board --collect-all adafruit_blinka --collect-all adafruit_ads1x15 --collect-data board smartpin_master.py
+
+      - name: Upload Artifact Package
+        uses: actions/upload-artifact@v4
+        with:
+          name: smartpin_master
+          path: dist/smartpin_master/
