@@ -7,6 +7,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -23,9 +25,13 @@ jobs:
       - name: Build with PyInstaller
         run: |
           pyinstaller --onedir --noconsole --collect-all adafruit_ads1x15 --collect-data board smartpin_master.py
+          cd dist/smartpin_master && zip -r ../../smartpin_master_linux_arm.zip *
 
-      - name: Upload Artifact Package
-        uses: actions/upload-artifact@v4
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
         with:
-          name: smartpin_master
-          path: dist/smartpin_master/
+          tag_name: latest
+          files: smartpin_master_linux_arm.zip
+          fail_on_unmatched_files: true
+          body: "Automated kiosk binary build for SmartPin Master."
+          <b>overwrite: true</b>
