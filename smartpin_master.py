@@ -57,7 +57,7 @@ class MainDashboard(tk.Frame):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.7)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.8)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
         
         settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
