@@ -250,14 +250,13 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.scan_wifi).pack(anchor="w")
 
     def perform_ota_update(self):
-        self.update_status_lbl.config(text="Status: Updating in background...", fg="#f59e0b")
+        self.update_status_lbl.config(text="Status: Running update script...", fg="#f59e0b")
         self.update_idletasks()
 
         script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
 
         try:
-            # Run the update script detached in the background using nohup 
-            # so it survives even after this GUI app shuts down completely.
+            # Launch update script completely detached in the background
             subprocess.Popen(
                 ["nohup", "bash", script_path],
                 stdout=subprocess.DEVNULL,
@@ -266,11 +265,10 @@ class SettingsView(tk.Frame):
                 start_new_session=True
             )
         except Exception as e:
-            print(f"Failed to launch background update: {e}")
+            print(f"Failed to launch update script: {e}")
 
-        # Exit the application immediately to release file locks 
-        # allowing update_kiosk.sh to run git pull and rebuild cleanly
-        self.after(1000, lambda: os._exit(0))
+        # Give the status label a second to display before the app closes itself
+        self.after(1500, lambda: os._exit(0))
         
     def scan_wifi(self):
         try:
