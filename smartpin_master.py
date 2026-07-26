@@ -251,34 +251,43 @@ class SettingsView(tk.Frame):
     def perform_ota_update(self):
         self.update_status_lbl.config(text="Status: Fetching & applying update...", fg="#f59e0b")
         self.update_idletasks()
-        
-        def run_update_thread():
-            try:
-                home_dir = os.path.expanduser("~")
-                script_path = os.path.join(home_dir, "smartpin-tester", "update_kiosk.sh")
-                if not os.path.exists(script_path):
-                    raise FileNotFoundError("update_kiosk.sh script not found.")
-                
-                # Run the bash update script and wait for it to complete without blocking GUI streams
-                process = subprocess.Popen([script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                stdout, stderr = process.communicate()
-                
-                if process.returncode != 0:
-                    raise Exception(stderr.strip() or "Update script failed.")
-                
-                # Success callback
-                self.after(0, lambda: self.update_status_lbl.config(text="Status: Update successful! Restarting...", fg="#10b981"))
-                self.after(1000, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting application..."))
-                
-                # Restart the kiosk application
-                launch_script = os.path.expanduser("~/smartpin-tester/kiosk_launch.sh")
-                if os.path.exists(launch_script):
-                    subprocess.Popen([launch_script])
-                
-                self.after(1500, lambda: os._exit(0))
-            except Exception as e:
-                err_str = str(e)
-                self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Failed ({err_str})", fg="#ef4444"))
+
+        script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
+
+        # Launch update script detached in the background using nohup so it runs independently
+        subprocess.Popen(
+            ["nohup", "bash", script_path],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            preexec_fn=os.setsid
+        )
+
+        # Give it a brief moment, then exit the app so files unlock and rebuild can complete
+        self.after(1500, lambda: os._exit(0))
+    def run_update_thread():
+        try:
+            script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
+
+            # Run the bash update script directly using bash
+            process = subprocess.Popen(["bash", script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout, stderr = process.communicate()
+
+            if process.returncode != 0:
+                raise Exception(stderr.strip() or stdout.strip() or "Update script failed.")
+
+            # Success callback
+            self.after(0, lambda: self.update_status_lbl.config(text="Status: Update successful! Restarting...", fg="#10b981"))
+            self.after(1000, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting application..."))
+
+            # Restart the kiosk application
+            launch_script = os.path.expanduser("~/smartpin-tester/kiosk_launch.sh")
+            if os.path.exists(launch_script):
+                subprocess.Popen([launch_script])
+
+            self.after(1500, lambda: os._exit(0))
+        except Exception as e:
+            err_str = str(e)
+            self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Failed ({err_str})", fg="#ef4444"))
                 
         threading.Thread(target=run_update_thread, daemon=True).start()
 
