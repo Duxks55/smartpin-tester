@@ -6,7 +6,14 @@ import os
 import time
 import sys
 
-# Attempt to load hardware libraries gracefully (prevents crashing if tested on a non-Pi PC)
+# Force Blinka to recognize the Raspberry Pi platform and set up permissions
+os.environ["BLINKA_FT232H"] = "0"
+try:
+    os.system("sudo chmod 666 /dev/i2c-*")
+except Exception:
+    pass
+
+# Attempt to load hardware libraries gracefully
 try:
     import board
     import busio
@@ -14,7 +21,8 @@ try:
     from adafruit_ads1x15.analog_in import AnalogIn
     from adafruit_ads1x15.ads1x15 import P0
     HARDWARE_AVAILABLE = True
-except (ImportError, NotImplementedError):
+except (ImportError, NotImplementedError) as e:
+    print(f"Blinka load error: {e}")
     HARDWARE_AVAILABLE = False
 
 class SmartPinMasterApp(tk.Tk):
@@ -221,7 +229,6 @@ class SettingsView(tk.Frame):
         
         tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
-        # Read current version from version.txt (defaults to v1.0.0 if missing)
         current_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
@@ -257,7 +264,6 @@ class SettingsView(tk.Frame):
         script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
 
         try:
-            # Launch update script completely detached in the background
             subprocess.Popen(
                 ["nohup", "bash", script_path],
                 stdout=subprocess.DEVNULL,
@@ -268,7 +274,6 @@ class SettingsView(tk.Frame):
         except Exception as e:
             print(f"Failed to launch update script: {e}")
 
-        # Give the status label a second to display before the app closes itself
         self.after(1500, lambda: os._exit(0))
 
     def scan_wifi(self):
