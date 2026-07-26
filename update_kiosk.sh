@@ -1,18 +1,21 @@
 #!/bin/bash
-cd ~/smartpin-tester
+cd /home/tpj655/smartpin-tester
+
+echo "Stopping existing application instances..."
+pkill -f smartpin_master
+pkill -f python3
 
 echo "Pulling latest changes from GitHub..."
 git pull origin main
 
-echo "Activating environment and rebuilding binary..."
-source ~/component_tester_env/bin/activate
-pyinstaller --noconfirm --onedir --noconsole --clean --collect-all adafruit_blinka --collect-all adafruit_ads1x15 smartpin_master.py
+echo "Activating Python environment..."
+source /home/tpj655/component_tester_env/bin/activate
 
-echo "Copying required JSON dependencies..."
-cp ~/component_tester_env/lib/python*/site-packages/board_imports.json ./dist/smartpin_master/_internal/
+echo "Installing/updating dependencies..."
+pip install -r requirements.txt --quiet
 
-echo "Update applied and rebuilt successfully!"
+echo "Update applied successfully! Launching application..."
 
-# Launch the newly built app explicitly after the build is 100% finished
+# Launch the app directly using Python to bypass binary file-locking issues entirely
 export DISPLAY=:0
-./dist/smartpin_master/smartpin_master &
+python3 smartpin_master.py &
