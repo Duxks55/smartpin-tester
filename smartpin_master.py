@@ -218,6 +218,18 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=10)
         
         tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
+        
+        # Read current version from version.txt (defaults to v1.0.0 if missing)
+        current_version = "v1.0.0"
+        try:
+            version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
+            if os.path.exists(version_file_path):
+                with open(version_file_path, "r") as f:
+                    current_version = f.read().strip()
+        except Exception:
+            pass
+
+        tk.Label(update_card, text=f"Current Running Version: {current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(5, 2))
         tk.Label(update_card, text="Pull pre-compiled releases automatically from GitHub repository.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
         
         self.update_status_lbl = tk.Label(update_card, text="Status: Up to date", fg="#10b981", bg="#1e293b", font=("Helvetica", 10))
@@ -246,7 +258,6 @@ class SettingsView(tk.Frame):
                 if not os.path.exists(script_path):
                     raise FileNotFoundError("update_kiosk.sh script not found in home folder path.")
                 
-                # Execute the shell update script
                 subprocess.run([script_path], check=True, capture_output=True, text=True)
                 
                 self.after(0, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting kiosk..."))
