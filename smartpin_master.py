@@ -260,7 +260,14 @@ class SettingsView(tk.Frame):
                 
                 subprocess.run([script_path], check=True, capture_output=True, text=True)
                 
-                self.after(0, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting kiosk..."))
+                # Notify and restart the application cleanly
+                self.after(0, lambda: messagebox.showinfo("Success", "Updates applied! Restarting kiosk..."))
+                
+                # Launch the launcher script and exit the current process
+                launch_script = os.path.expanduser("~/smartpin-tester/kiosk_launch.sh")
+                if os.path.exists(launch_script):
+                    subprocess.Popen([launch_script])
+                
                 self.after(0, lambda: os._exit(0))
             except Exception as e:
                 self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Failed ({e})", fg="#ef4444"))
