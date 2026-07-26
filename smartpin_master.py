@@ -249,28 +249,35 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.scan_wifi).pack(anchor="w")
 
     def perform_ota_update(self):
-        self.update_status_lbl.config(text="Status: Fetching update from GitHub...", fg="#f59e0b")
+        self.update_status_lbl.config(text="Status: Fetching & applying update...", fg="#f59e0b")
         self.update_idletasks()
         
         def run_update_thread():
             try:
                 script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
                 if not os.path.exists(script_path):
-                    raise FileNotFoundError("update_kiosk.sh script not found in home folder path.")
+                    raise FileNotFoundError("update_kiosk.sh script not found.")
                 
-                subprocess.run([script_path], check=True, capture_output=True, text=True)
+                # Run the bash update script and wait for it to complete without blocking GUI streams
+                process = subprocess.Popen([script_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                stdout, stderr = process.communicate()
                 
-                # Notify and restart the application cleanly
-                self.after(0, lambda: messagebox.showinfo("Success", "Updates applied! Restarting kiosk..."))
+                if process.returncode != 0:
+                    raise Exception(stderr.strip() or "Update script failed.")
                 
-                # Launch the launcher script and exit the current process
+                # Success callback
+                self.after(0, lambda: self.update_status_lbl.config(text="Status: Update successful! Restarting...", fg="#10b981"))
+                self.after(1000, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting application..."))
+                
+                # Restart the kiosk application
                 launch_script = os.path.expanduser("~/smartpin-tester/kiosk_launch.sh")
                 if os.path.exists(launch_script):
                     subprocess.Popen([launch_script])
                 
-                self.after(0, lambda: os._exit(0))
+                self.after(1500, lambda: os._exit(0))
             except Exception as e:
-                self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Failed ({e})", fg="#ef4444"))
+                err_str = str(e)
+                self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Failed ({err_str})", fg="#ef4444"))
                 
         threading.Thread(target=run_update_thread, daemon=True).start()
 
