@@ -12,6 +12,7 @@ try:
     import busio
     import adafruit_ads1x15.ads1115 as ADS
     from adafruit_ads1x15.analog_in import AnalogIn
+    from adafruit_ads1x15.ads1x15 import P0
     HARDWARE_AVAILABLE = True
 except (ImportError, NotImplementedError):
     HARDWARE_AVAILABLE = False
@@ -57,7 +58,7 @@ class MainDashboard(tk.Frame):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.3)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.9)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
         
         settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
@@ -141,7 +142,7 @@ class TransistorCheckerView(tk.Frame):
                 if HARDWARE_AVAILABLE:
                     i2c = busio.I2C(board.SCL, board.SDA)
                     ads = ADS.ADS1115(i2c, address=0x48)
-                    chan = AnalogIn(ads, ADS.P0)
+                    chan = AnalogIn(ads, P0)
                     voltage = chan.voltage
                     
                     # Threshold check to prevent false positives from floating noise
@@ -269,7 +270,7 @@ class SettingsView(tk.Frame):
 
         # Give the status label a second to display before the app closes itself
         self.after(1500, lambda: os._exit(0))
-        
+
     def scan_wifi(self):
         try:
             nets = subprocess.check_output(["nmcli", "-t", "-f", "SSID", "dev", "wifi"]).decode()
