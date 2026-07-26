@@ -6,8 +6,7 @@ import os
 import time
 import sys
 
-# Force Blinka to recognize the Raspberry Pi platform and set up permissions
-os.environ["BLINKA_FT232H"] = "0"
+# Set up I2C permissions for non-root users if needed
 try:
     os.system("sudo chmod 666 /dev/i2c-*")
 except Exception:
@@ -66,7 +65,7 @@ class MainDashboard(tk.Frame):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.10)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.9)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
         
         settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
@@ -142,8 +141,8 @@ class TransistorCheckerView(tk.Frame):
         test_btn.pack(anchor="w")
 
         # Setup Multiplexer GPIO hardware channels if available
-        self.mux1_pins = [4, 5, 6]
-        self.mux2_pins = [7, 8, 9]
+        self.mux1_pins = [4, 5, 6]  # Measurement MUX (S0, S1, S2)
+        self.mux2_pins = [7, 8, 9]  # Bias / Source MUX (S0, S1, S2)
         if HARDWARE_AVAILABLE:
             try:
                 GPIO.setmode(GPIO.BCM)
