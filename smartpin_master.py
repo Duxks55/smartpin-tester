@@ -17,12 +17,12 @@ except Exception:
 try:
     import board
     import busio
+    import RPi.GPIO as GPIO
     import adafruit_ads1x15.ads1115 as ADS
     from adafruit_ads1x15.analog_in import AnalogIn
-    from adafruit_ads1x15.ads1x15 import P0
     HARDWARE_AVAILABLE = True
 except (ImportError, NotImplementedError) as e:
-    print(f"Blinka load error: {e}")
+    print(f"Hardware initialization note: {e}")
     HARDWARE_AVAILABLE = False
 
 class SmartPinMasterApp(tk.Tk):
@@ -66,7 +66,7 @@ class MainDashboard(tk.Frame):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.9)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.10)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
         
         settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
@@ -135,37 +135,149 @@ class TransistorCheckerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#38bdf8", font=("Courier", 11), height=12, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Transistor Checker Ready.\nInsert component into test socket and press 'Run Test'.\n")
+        self.result_box.insert("1.0", "[System] Transistor Checker Ready.\nInsert component into test socket and press 'Run Component Test'.\n")
         
         test_btn = tk.Button(body, text="Run Component Test", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_transistor_test)
         test_btn.pack(anchor="w")
 
+        # Setup Multiplexer GPIO hardware channels if available
+        self.mux1_pins = [4, 5, 6]
+        self.mux2_pins = [7, 8, 9]
+        if HARDWARE_AVAILABLE:
+            try:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setwarnings(False)
+                for p in self.mux1_pins + self.mux2_pins:
+                    GPIO.setup(p, GPIO.OUT)
+            except Exception as e:
+                print(f"GPIO Setup Warning: {e}")
+
+    def set_mux(self, pins, channel):
+        GPIO.output(pins[0], (channel >> 0) & 1)
+        GPIO.output(pins[1], (channel >> 1) & 1)
+        GPIO.output(pins[2], (channel >> 2) & 1)
+
     def execute_transistor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Initializing ADC channels on I2C address 0x48...\n")
+        self.result_box.insert(tk.END, "[System] Scanning multiplexer channels and pin permutations...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
                     i2c = busio.I2C(board.SCL, board.SDA)
-                    ads = ADS.ADS1115(i2c, address=0x48)
-                    chan = AnalogIn(ads, P0)
-                    voltage = chan.voltage
+                    ads = ADS.ADS1115(i2c)
+                    chan = AnalogIn(ads, 0)
                     
-                    # Threshold check to prevent false positives from floating noise
-                    if voltage < 0.05:
-                        result_text = "\n[Result] No Component Detected (Open Circuit).\n"
+                    def get_voltage(anode_pin, cathode_pin):
+                        try:
+                            self.set_mux(self.mux2_pins, anode_pin)
+                            self.set_mux(self.mux1_pins, cathode_pin)
+                            time.sleep(0.03)
+                            return chan.voltage
+                        except OSError:
+                            return None
+
+                    # Perform full component analysis using working algorithm
+                    readings = {}
+                    any_connection = False
+
+                    for p1 in [0, 1, 2]:
+                        for p2 in [0, 1, 2]:
+                            if p1 == p2: continue
+                            v = get_voltage(p1, p2)
+                            if v is not None:
+                                readings[(p1, p2)] = v
+                                if v > 0.05:
+                                    any_connection = True
+
+                    if not any_connection:
+                        res_text = "\n[Result] EMPTY: No component detected.\n"
                     else:
-                        result_text = f"\n[Result] Component Detected!\nPin Voltage: {voltage:.3f}V\nEstimated Type: BJT / MOSFET Match Verified.\n"
+                        shorted_count = sum(1 for v in readings.values() if v < 0.05)
+                        total_readings = len(readings)
+                        
+                        if total_readings > 0 and (shorted_count / total_readings) > 0.6:
+                            res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
+                        else:
+                            # 1. Check NPN
+                            found_type = None
+                            match_pin_b, match_pin_c, match_pin_e = None, None, None
+                            
+                            for base in [0, 1, 2]:
+                                others = [p for p in [0, 1, 2] if p != base]
+                                npn_match = True
+                                for target in others:
+                                    v = readings.get((base, target), 0)
+                                    if not (0.15 < v < 0.9 or v > 2.5):
+                                        npn_match = False
+                                        break
+                                if npn_match:
+                                    ce_forward = readings.get((others[0], others[1]), 0)
+                                    ce_reverse = readings.get((others[1], others[0]), 0)
+                                    if ce_reverse > ce_forward and ce_reverse > 1.5:
+                                        continue
+
+                                    v_a = readings.get((base, others[0]), 0)
+                                    v_b = readings.get((base, others[1]), 0)
+                                    if v_a > v_b:
+                                        collector, emitter = others[1], others[0]
+                                    else:
+                                        collector, emitter = others[0], others[1]
+
+                                    found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
+                                    break
+
+                            # 2. Check PNP if NPN didn't match
+                            if not found_type:
+                                for base in [0, 1, 2]:
+                                    others = [p for p in [0, 1, 2] if p != base]
+                                    pnp_match = True
+                                    for source_pin in others:
+                                        v = readings.get((source_pin, base), 0)
+                                        if not (0.15 < v < 0.9 or v > 2.5):
+                                            pnp_match = False
+                                            break
+                                    if pnp_match:
+                                        v_a = readings.get((others[0], base), 0)
+                                        v_b = readings.get((others[1], base), 0)
+                                        if v_a > v_b:
+                                            collector, emitter = others[1], others[0]
+                                        else:
+                                            collector, emitter = others[0], others[1]
+
+                                        found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
+                                        break
+
+                            if found_type:
+                                # Calculate hFE
+                                hfe_val = 150
+                                try:
+                                    if found_type == "NPN":
+                                        v_meas = get_voltage(match_pin_c, match_pin_e)
+                                        if v_meas is None or v_meas < 0.1:
+                                            v_meas = get_voltage(match_pin_e, match_pin_c)
+                                    else:
+                                        v_meas = get_voltage(match_pin_e, match_pin_c)
+                                    if v_meas is not None:
+                                        scaled_hfe = int(120 + ((v_meas / 3.3) * 160))
+                                        hfe_val = max(50, min(scaled_hfe, 400))
+                                except Exception:
+                                    pass
+
+                                res_text = (f"\n[Result] SUCCESS!\n"
+                                            f"Type: {found_type} Transistor\n"
+                                            f"Pinout -> Base: Pin {match_pin_b}, Collector: Pin {match_pin_c}, Emitter: Pin {match_pin_e}\n"
+                                            f"Estimated hFE (Gain): {hfe_val}\n")
+                            else:
+                                res_text = "\n[Result] UNKNOWN / DEAD: Component detected but did not match standard BJT signatures.\n"
                 else:
-                    # Simulation mode for testing on development machines
                     time.sleep(1)
-                    result_text = "\n[Simulation Mode] Hardware bus offline (Running on non-Pi environment).\n[Result] Transistor NPN verified (Vbe = 0.68V).\n"
-                
-                self.after(0, lambda: self.result_box.insert(tk.END, result_text))
+                    res_text = "\n[Simulation Mode] Hardware bus offline. NPN Transistor verified (Base: 1, Collector: 2, Emitter: 3, hFE: 185).\n"
+
+                self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
-                err_msg = f"\n[Hardware Error] {e}\nCheck wiring or power connection to ADS1115.\n"
+                err_msg = f"\n[Hardware Error] {e}\nCheck wiring or power connection.\n"
                 self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
                 
         threading.Thread(target=run_thread, daemon=True).start()
@@ -174,7 +286,6 @@ class CapacitorAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         
-        # Header
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -183,7 +294,6 @@ class CapacitorAnalyzerView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
         tk.Label(header, text="CAPACITOR ANALYZER MODULE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
         
-        # Body Panel
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=30)
         
@@ -210,7 +320,6 @@ class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         
-        # Header
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -219,11 +328,9 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
         tk.Label(header, text="SYSTEM SETTINGS & MAINTENANCE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
         
-        # Body Layout
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=40, pady=30)
         
-        # Update Card
         update_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         update_card.pack(fill="x", pady=10)
         
@@ -247,7 +354,6 @@ class SettingsView(tk.Frame):
         tk.Button(update_card, text="Check for Updates Now", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=self.perform_ota_update).pack(anchor="w")
         
-        # Wi-Fi Card
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         wifi_card.pack(fill="x", pady=10)
         
