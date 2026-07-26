@@ -237,13 +237,18 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.scan_wifi).pack(anchor="w")
 
     def perform_ota_update(self):
-        self.update_status_lbl.config(text="Status: Fetching updates from GitHub...", fg="#f59e0b")
+        self.update_status_lbl.config(text="Status: Fetching update from GitHub...", fg="#f59e0b")
         self.update_idletasks()
         
         def run_update_thread():
             try:
-                repo_path = os.path.expanduser("~/smartpin-tester")
-                subprocess.run(["git", "-C", repo_path, "pull"], check=True, capture_output=True)
+                script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
+                if not os.path.exists(script_path):
+                    raise FileNotFoundError("update_kiosk.sh script not found in home folder path.")
+                
+                # Execute the shell update script
+                subprocess.run([script_path], check=True, capture_output=True, text=True)
+                
                 self.after(0, lambda: messagebox.showinfo("Success", "Updates applied successfully! Restarting kiosk..."))
                 self.after(0, lambda: os._exit(0))
             except Exception as e:
