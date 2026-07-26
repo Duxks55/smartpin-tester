@@ -254,7 +254,8 @@ class SettingsView(tk.Frame):
         
         def run_update_thread():
             try:
-                script_path = os.path.expanduser("~/smartpin-tester/update_kiosk.sh")
+                home_dir = os.path.expanduser("~")
+                script_path = os.path.join(home_dir, "smartpin-tester", "update_kiosk.sh")
                 if not os.path.exists(script_path):
                     raise FileNotFoundError("update_kiosk.sh script not found.")
                 

@@ -12,4 +12,4 @@ pyinstaller --onedir --noconsole --clean --collect-all adafruit_blinka --collect
 # Copy the missing json dependency back into place
 cp ~/component_tester_env/lib/python*/site-packages/board_imports.json ./dist/smartpin_master/_internal/
 
-echo "Update applied and rebuilt successfully!"
+echo "Update applied and rebuilt successfully!"	
