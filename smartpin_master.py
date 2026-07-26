@@ -221,7 +221,7 @@ class SettingsView(tk.Frame):
         tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
         # Read current version from version.txt (defaults to v1.0.0 if missing)
-        current_version = "v1.0.4"
+        current_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
             if os.path.exists(version_file_path):
