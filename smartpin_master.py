@@ -341,7 +341,8 @@ class SettingsView(tk.Frame):
         except Exception:
             pass
 
-        tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(5, 2))
+        self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
+        self.version_lbl.pack(anchor="w", pady=(5, 2))
         tk.Label(update_card, text="Pulls updates automatically from your GitHub repository.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
         
         self.update_status_lbl = tk.Label(update_card, text="Status: Checking for updates...", fg="#f59e0b", bg="#1e293b", font=("Helvetica", 10, "bold"))
@@ -375,6 +376,18 @@ class SettingsView(tk.Frame):
         if manual:
             self.update_status_lbl.config(text="Status: Checking GitHub...", fg="#f59e0b")
         self.update_idletasks()
+
+        # Dynamically re-read local version file on every check
+        local_version = "v1.0.0"
+        try:
+            version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
+            if os.path.exists(version_file_path):
+                with open(version_file_path, "r") as f:
+                    local_version = f.read().strip()
+        except Exception:
+            pass
+        self.current_version = local_version
+        self.version_lbl.config(text=f"Current Running Version: {self.current_version}")
 
         def query_github():
             update_available = False
