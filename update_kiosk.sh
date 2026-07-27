@@ -6,7 +6,8 @@ sudo pkill -f smartpin_master
 sudo pkill -f python3
 
 echo "Pulling latest changes from GitHub..."
-git pull origin main
+git fetch origin main
+git reset --hard origin/main
 
 echo "Cleaning old build artifacts..."
 rm -rf build dist
