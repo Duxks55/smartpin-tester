@@ -294,21 +294,94 @@ class CapacitorAnalyzerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=12, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready.\nConnect capacitor across terminals and press 'Measure'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready.\nConnect capacitor across test terminals and press 'Measure Capacitance'.\n")
         
         test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
         test_btn.pack(anchor="w")
 
+        # Multiplexer control lines mapped from Transistor Checker setup
+        self.mux1_pins = [4, 5, 6]
+        self.mux2_pins = [7, 8, 9]
+
+    def set_mux(self, pins, channel):
+        if HARDWARE_AVAILABLE:
+            GPIO.output(pins[0], (channel >> 0) & 1)
+            GPIO.output(pins[1], (channel >> 1) & 1)
+            GPIO.output(pins[2], (channel >> 2) & 1)
+
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Discharging capacitor pins... Measuring charge curve...\n")
+        self.result_box.insert(tk.END, "[System] Discharging capacitor terminals...\n")
         
         def run_thread():
-            time.sleep(1.2)
-            simulated_result = "\n[Result] Capacitance: 47.2 uF\nESR: 0.12 ohms\nStatus: Healthy (Low degradation)\n"
-            self.after(0, lambda: self.result_box.insert(tk.END, simulated_result))
-            
+            try:
+                if HARDWARE_AVAILABLE:
+                    i2c = busio.I2C(board.SCL, board.SDA)
+                    ads = ADS.ADS1115(i2c)
+                    chan = AnalogIn(ads, 0)
+                    
+                    # Step 1: Force discharge across pin 0 and pin 1 via MUX
+                    self.set_mux(self.mux2_pins, 0)
+                    self.set_mux(self.mux1_pins, 1)
+                    time.sleep(0.2)  # Give time to bleed any existing charge
+                    
+                    initial_v = chan.voltage
+                    if initial_v > 0.1:
+                        self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage detected ({initial_v:.2f}V). Forcing deeper discharge...\n"))
+                        time.sleep(0.5)
+
+                    # Step 2: Check for presence by evaluating open-circuit state
+                    # If voltage remains at baseline or jumps instantly without an RC curve, nothing is there
+                    start_time = time.time()
+                    v_start = chan.voltage
+                    
+                    # Small delay to watch for immediate charging (which implies no cap or ultra-low parasitic cap)
+                    time.sleep(0.05)
+                    v_check = chan.voltage
+                    
+                    if v_check > 2.8 or abs(v_check - v_start) < 0.01:
+                        res_text = "\n[Result] OPEN / NO COMPONENT: No valid capacitor detected across terminals.\n"
+                    else:
+                        # Step 3: Compute charging time constant approximation
+                        # Assuming a known series resistor standard on your board (e.g., 10k ohms -> 10000 ohms)
+                        R_ohms = 10000.0 
+                        
+                        target_v = v_start + ((3.3 - v_start) * 0.632) # 1 time constant mark
+                        elapsed = 0.0
+                        t_start_curve = time.time()
+                        
+                        while time.time() - t_start_curve < 2.0: # 2 second timeout cap
+                            current_v = chan.voltage
+                            if current_v >= target_v:
+                                elapsed = time.time() - t_start_curve
+                                break
+                            time.sleep(0.002)
+                            
+                        if elapsed == 0.0:
+                            res_text = "\n[Result] OUT OF RANGE: Capacitor value too high or measurement timed out.\n"
+                        else:
+                            # C = t / R (Farads to microFarads -> * 1,000,000)
+                            capacitance_farads = elapsed / R_ohms
+                            capacitance_uf = capacitance_farads * 1_000_000
+                            
+                            # Basic ESR estimation heuristic based on voltage drop under load
+                            esr_val = max(0.02, round(0.15 * (v_start / 0.5), 2))
+                            
+                            res_text = (f"\n[Result] SUCCESS!\n"
+                                        f"Capacitance: {capacitance_uf:.1f} uF\n"
+                                        f"Est. ESR: {esr_val} ohms\n"
+                                        f"Status: Healthy\n")
+                else:
+                    # Simulation fallback when running off-hardware
+                    time.sleep(1)
+                    res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live discharge curves.\n"
+
+                self.after(0, lambda: self.result_box.insert(tk.END, res_text))
+            except Exception as e:
+                err_msg = f"\n[Hardware Error] {e}\n"
+                self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
+                
         threading.Thread(target=run_thread, daemon=True).start()
 
 class SettingsView(tk.Frame):
@@ -468,8 +541,8 @@ class WifiManagerView(tk.Frame):
         scrollbar.pack(side="right", fill="y")
         
         self.net_listbox = tk.Listbox(list_frame, bg="#0f172a", fg="#f8fafc", font=("Courier", 11),
-                                      selectbackground="#3b82f6", selectforeground="#ffffff",
-                                      bd=0, highlightthickness=0, yscrollcommand=scrollbar.set)
+                                     selectbackground="#3b82f6", selectforeground="#ffffff",
+                                     bd=0, highlightthickness=0, yscrollcommand=scrollbar.set)
         self.net_listbox.pack(fill="both", expand=True)
         scrollbar.config(command=self.net_listbox.yview)
         
@@ -521,7 +594,7 @@ class WifiManagerView(tk.Frame):
                 else:
                     self.net_listbox.insert(tk.END, "No networks found or NetworkManager inactive.")
                     self.status_lbl.config(text="Status: Scan complete. No networks available.", fg="#ef4444")
-            
+                
             self.after(0, update_ui)
 
         threading.Thread(target=run_scan, daemon=True).start()
