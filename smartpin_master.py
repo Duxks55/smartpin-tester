@@ -186,16 +186,17 @@ class TransistorCheckerView(tk.Frame):
                             v = get_voltage(p1, p2)
                             if v is not None:
                                 readings[(p1, p2)] = v
-                                if v > 0.05:
+                                if v > 0.02:  # Lowered sensitivity floor for connection presence
                                     any_connection = True
 
                     if not any_connection:
                         res_text = "\n[Result] EMPTY: No component detected.\n"
                     else:
-                        shorted_count = sum(1 for v in readings.values() if v < 0.05)
+                        # Lowered short threshold from 0.05 to 0.01 to prevent false dead/short flags on valid junctions
+                        shorted_count = sum(1 for v in readings.values() if v < 0.01)
                         total_readings = len(readings)
                         
-                        if total_readings > 0 and (shorted_count / total_readings) > 0.6:
+                        if total_readings > 0 and (shorted_count / total_readings) > 0.7:
                             res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
                         else:
                             found_type = None
