@@ -155,8 +155,13 @@ class TransistorCheckerView(tk.Frame):
                              font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_transistor_test)
         test_btn.pack(anchor="w")
-        self.mux1_pins = [4, 5, 6]
-        self.mux2_pins = [7, 8, 9]
+
+        # --- Hardware Setup for CD74HC4051E Multiplexers ---
+        self.mux1_pins = [4, 5, 6]   # Measurement MUX (S0, S1, S2)
+        self.mux2_pins = [7, 8, 9]   # Bias / Source MUX (S0, S1, S2)
+        self.source_resistor_ohms = 330.0
+        self.supply_voltage = 3.3
+
         if HARDWARE_AVAILABLE:
             try:
                 GPIO.setmode(GPIO.BCM)
@@ -167,9 +172,111 @@ class TransistorCheckerView(tk.Frame):
                 print(f"GPIO Setup Warning: {e}")
 
     def set_mux(self, pins, channel):
+        """Sets the 3-bit channel address on the CD74HC4051E multiplexer."""
         GPIO.output(pins[0], (channel >> 0) & 1)
         GPIO.output(pins[1], (channel >> 1) & 1)
         GPIO.output(pins[2], (channel >> 2) & 1)
+
+    def get_voltage(self, anode_pin, cathode_pin, chan):
+        """Configures multiplexer pathways and reads analog voltage via ADS1115 ADC."""
+        try:
+            self.set_mux(self.mux2_pins, anode_pin)    # High Side (Source)
+            self.set_mux(self.mux1_pins, cathode_pin)  # Low Side (Measure)
+            time.sleep(0.03)                           # Settling time for analog stability
+            return chan.voltage
+        except OSError:
+            return None
+
+    def analyze_transistor(self, chan):
+        """Scans all pin permutations to detect component presence, type, and pinout."""
+        readings = {}
+        any_connection = False
+
+        for p1 in [0, 1, 2]:
+            for p2 in [0, 1, 2]:
+                if p1 == p2: continue
+                v = self.get_voltage(p1, p2, chan)
+                if v is not None:
+                    readings[(p1, p2)] = v
+                    if v > 0.05:
+                        any_connection = True
+
+        if not any_connection:
+            return "EMPTY", None, None, None
+
+        # Check for Dead / Shorted component
+        shorted_count = 0
+        total_readings = 0
+        for k, v in readings.items():
+            total_readings += 1
+            if v < 0.05:
+                shorted_count += 1
+
+        if total_readings > 0 and (shorted_count / total_readings) > 0.6:
+            return "DEAD", None, None, None
+
+        # 1. Check NPN: Base is common source
+        for base in [0, 1, 2]:
+            others = [p for p in [0, 1, 2] if p != base]
+            npn_match = True
+            for target in others:
+                v = readings.get((base, target), 0)
+                if not (0.15 < v < 0.9 or v > 2.5):
+                    npn_match = False
+                    break
+            if npn_match:
+                ce_forward = readings.get((others[0], others[1]), 0)
+                ce_reverse = readings.get((others[1], others[0]), 0)
+                if ce_reverse > ce_forward and ce_reverse > 1.5:
+                    continue
+
+                v_a = readings.get((base, others[0]), 0)
+                v_b = readings.get((base, others[1]), 0)
+                if v_a > v_b:
+                    collector, emitter = others[1], others[0]
+                else:
+                    collector, emitter = others[0], others[1]
+
+                return "NPN", base, collector, emitter
+
+        # 2. Check PNP: Base is common sink
+        for base in [0, 1, 2]:
+            others = [p for p in [0, 1, 2] if p != base]
+            pnp_match = True
+            for source_pin in others:
+                v = readings.get((source_pin, base), 0)
+                if not (0.15 < v < 0.9 or v > 2.5):
+                    pnp_match = False
+                    break
+            if pnp_match:
+                v_a = readings.get((others[0], base), 0)
+                v_b = readings.get((others[1], base), 0)
+                if v_a > v_b:
+                    collector, emitter = others[1], others[0]
+                else:
+                    collector, emitter = others[0], others[1]
+
+                return "PNP", base, collector, emitter
+
+        return "DEAD", None, None, None
+
+    def calculate_hfe(self, transistor_type, base, collector_pin, emitter_pin, chan):
+        """Estimates transistor current gain (hFE) based on active bias voltage drop."""
+        try:
+            if transistor_type == "NPN":
+                v_measured = self.get_voltage(collector_pin, emitter_pin, chan)
+                if v_measured is None or v_measured < 0.1:
+                    v_measured = self.get_voltage(emitter_pin, collector_pin, chan)
+            else:
+                v_measured = self.get_voltage(emitter_pin, collector_pin, chan)
+
+            if v_measured is None: return 150
+
+            scaled_hfe = int(120 + ((v_measured / self.supply_voltage) * 160))
+            return max(50, min(scaled_hfe, 400))
+        except Exception:
+            pass
+        return 150
 
     def execute_transistor_test(self):
         self.result_box.delete("1.0", tk.END)
@@ -182,100 +289,22 @@ class TransistorCheckerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
 
-                    def get_voltage(anode_pin, cathode_pin):
-                        try:
-                            self.set_mux(self.mux2_pins, anode_pin)
-                            self.set_mux(self.mux1_pins, cathode_pin)
-                            time.sleep(0.03)
-                            return chan.voltage
-                        except OSError:
-                            return None
+                    t_type, base, collector, emitter = self.analyze_transistor(chan)
 
-                    readings = {}
-                    any_connection = False
-                    for p1 in [0, 1, 2]:
-                        for p2 in [0, 1, 2]:
-                            if p1 == p2:
-                                continue
-                            v = get_voltage(p1, p2)
-                            if v is not None:
-                                readings[(p1, p2)] = v
-                                if v > 0.05:
-                                    any_connection = True
-                    if not any_connection:
+                    if t_type == "EMPTY":
                         res_text = "\n[Result] EMPTY: No component detected.\n"
+                    elif t_type == "DEAD":
+                        res_text = "\n[Result] DEAD / SHORTED / UNKNOWN: Component failure or unrecognized signature detected.\n"
                     else:
-                        shorted_count = sum(1 for v in readings.values() if v < 0.05)
-                        total_readings = len(readings)
-
-                        if total_readings > 0 and (shorted_count / total_readings) > 0.6:
-                            res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
-                        else:
-                            found_type = None
-                            match_pin_b, match_pin_c, match_pin_e = None, None, None
-
-                            for base in [0, 1, 2]:
-                                others = [p for p in [0, 1, 2] if p != base]
-                                npn_match = True
-                                for target in others:
-                                    v = readings.get((base, target), 0)
-                                    if not (0.15 < v < 0.9 or v > 2.5):
-                                        npn_match = False
-                                        break
-                                if npn_match:
-                                    ce_forward = readings.get((others[0], others[1]), 0)
-                                    ce_reverse = readings.get((others[1], others[0]), 0)
-                                    if ce_reverse > ce_forward and ce_reverse > 1.5:
-                                        continue
-                                    v_a = readings.get((base, others[0]), 0)
-                                    v_b = readings.get((base, others[1]), 0)
-                                    if v_a > v_b:
-                                        collector, emitter = others[1], others[0]
-                                    else:
-                                        collector, emitter = others[0], others[1]
-                                    found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
-                                    break
-                            if not found_type:
-                                for base in [0, 1, 2]:
-                                    others = [p for p in [0, 1, 2] if p != base]
-                                    pnp_match = True
-                                    for source_pin in others:
-                                        v = readings.get((source_pin, base), 0)
-                                        if not (0.15 < v < 0.9 or v > 2.5):
-                                            pnp_match = False
-                                            break
-                                    if pnp_match:
-                                        v_a = readings.get((others[0], base), 0)
-                                        v_b = readings.get((others[1], base), 0)
-                                        if v_a > v_b:
-                                            collector, emitter = others[1], others[0]
-                                        else:
-                                            collector, emitter = others[0], others[1]
-                                        found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
-                                        break
-                            if found_type:
-                                hfe_val = 150
-                                try:
-                                    if found_type == "NPN":
-                                        v_meas = get_voltage(match_pin_c, match_pin_e)
-                                        if v_meas is None or v_meas < 0.1:
-                                            v_meas = get_voltage(match_pin_e, match_pin_c)
-                                    else:
-                                        v_meas = get_voltage(match_pin_e, match_pin_c)
-                                    if v_meas is not None:
-                                        scaled_hfe = int(120 + ((v_meas / 3.3) * 160))
-                                        hfe_val = max(50, min(scaled_hfe, 400))
-                                except Exception:
-                                    pass
-                                res_text = (f"\n[Result] SUCCESS!\n"
-                                            f"Type: {found_type} Transistor\n"
-                                            f"Pinout -> Base: Pin {match_pin_b}, Collector: Pin {match_pin_c}, Emitter: Pin {match_pin_e}\n"
-                                            f"Estimated hFE (Gain): {hfe_val}\n")
-                            else:
-                                res_text = "\n[Result] UNKNOWN / DEAD: Component detected but did not match standard BJT signatures.\n"
+                        hfe_val = self.calculate_hfe(t_type, base, collector, emitter, chan)
+                        res_text = (f"\n[Result] SUCCESS!\n"
+                                    f"Type: {t_type} Transistor\n"
+                                    f"Pinout -> Base: Pin {base}, Collector: Pin {collector}, Emitter: Pin {emitter}\n"
+                                    f"Estimated hFE (Gain): {hfe_val}\n")
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline. NPN Transistor verified (Base: 1, Collector: 2, Emitter: 3, hFE: 185).\n"
+                
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
                 err_msg = f"\n[Hardware Error] {e}\nCheck wiring or power connection.\n"
@@ -351,7 +380,6 @@ class CapacitorAnalyzerView(tk.Frame):
     def full_drain(self, discharge_pin_mux1):
         """Uses the robust drain routine to clear the capacitor completely before testing."""
         try:
-            # Ensure shunt transistor is OFF during full drain unless needed, or handle appropriately
             if HARDWARE_AVAILABLE:
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
             self.set_mux(self.mux2_pins, self.discharge_channel)
@@ -373,11 +401,9 @@ class CapacitorAnalyzerView(tk.Frame):
             if v_check is None or v_check > 0.15:
                 return None
                
-            # Ensure the 2N3904 shunt transistor on GPIO 20 is OFF so it stops pulling Pin 3 to ground
             if HARDWARE_AVAILABLE:
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
 
-            # Establish closed loop across both multiplexers
             self._log(f"[Debug] Setting MUX2 source channel {self.source_channel}, MUX1 ground channel {ground_pin}")
             self.set_mux(self.mux2_pins, self.source_channel)
             self.set_mux(self.mux1_pins, ground_pin)
@@ -393,9 +419,8 @@ class CapacitorAnalyzerView(tk.Frame):
                     self._log("[Debug Error] ADC returned None during charge loop.")
                     return None
                 
-                # Print live voltage ticks to see if it's climbing at all
                 elapsed_so_far = time.time() - start_time
-                if int(elapsed_so_far * 10) % 5 == 0:  # Log roughly every 0.5s
+                if int(elapsed_so_far * 10) % 5 == 0:
                     self._log(f"[Charging...] V = {measured_v:.3f}V (t={elapsed_so_far:.2f}s)")
 
                 if elapsed_so_far > 8.0:
