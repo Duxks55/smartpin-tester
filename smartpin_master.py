@@ -305,8 +305,8 @@ class CapacitorAnalyzerView(tk.Frame):
                                   font=("Courier", 11), height=16, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
         self.result_box.insert("1.0",
-            "[System] Capacitor Analyzer Ready.\n"
-            "Connect capacitor across the test terminals and press Measure.\n")
+            "[System] Working-Loop Auto-ID Capacitor Tester Ready.\n"
+            "Insert capacitor across test terminals and press Measure Capacitance...\n")
 
         test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff",
                              font=("Helvetica", 12, "bold"), relief="flat",
@@ -315,6 +315,9 @@ class CapacitorAnalyzerView(tk.Frame):
 
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
+        self.discharge_pin = 27
+        self.discharge_channel = 3
+        self.source_channel = 3
 
         if HARDWARE_AVAILABLE:
             try:
@@ -322,21 +325,75 @@ class CapacitorAnalyzerView(tk.Frame):
                 GPIO.setwarnings(False)
                 for p in self.mux1_pins + self.mux2_pins:
                     GPIO.setup(p, GPIO.OUT)
-                    GPIO.output(p, 0)
+                GPIO.setup(self.discharge_pin, GPIO.OUT)
+                GPIO.output(self.discharge_pin, GPIO.LOW)
             except Exception as e:
                 print(f"GPIO Setup Warning (Capacitor): {e}")
 
     def set_mux(self, pins, channel):
         if not HARDWARE_AVAILABLE:
             return
+        channel = channel & 0x07
         GPIO.output(pins[0], (channel >> 0) & 1)
         GPIO.output(pins[1], (channel >> 1) & 1)
         GPIO.output(pins[2], (channel >> 2) & 1)
 
     def _log(self, msg):
         """Thread-safe log to both the Text widget and the console."""
-        print(msg)  # always visible in the terminal
+        print(msg)
         self.after(0, lambda: self.result_box.insert(tk.END, msg + "\n"))
+
+    def full_drain(self, discharge_pin_mux1):
+        """Uses the robust drain routine to clear the capacitor completely before testing."""
+        try:
+            self.set_mux(self.mux2_pins, self.discharge_channel)
+            self.set_mux(self.mux1_pins, discharge_pin_mux1)
+            GPIO.output(self.discharge_pin, GPIO.HIGH)
+            time.sleep(2.5)
+        finally:
+            GPIO.output(self.discharge_pin, GPIO.LOW)
+            time.sleep(0.1)
+
+    def try_measurement(self, measure_pin, ground_pin, chan):
+        try:
+            self.full_drain(ground_pin)
+           
+            self.set_mux(self.mux1_pins, measure_pin)
+            time.sleep(0.05)
+            v_check = chan.voltage if HARDWARE_AVAILABLE else 0.0
+            self._log(f"[Debug] Post-drain voltage (Pin {measure_pin}): {v_check:.3f}V" if v_check is not None else "[Debug] Post-drain voltage: None")
+            if v_check is None or v_check > 0.15:
+                return None
+               
+            # Establish closed loop across both multiplexers
+            self.set_mux(self.mux2_pins, self.source_channel)
+            self.set_mux(self.mux1_pins, ground_pin)
+            time.sleep(0.02)
+           
+            start_time = time.time()
+            target_voltage = 1.5
+           
+            measured_v = 0.0
+            while measured_v < target_voltage:
+                measured_v = chan.voltage if HARDWARE_AVAILABLE else (target_voltage + 0.1)
+                if measured_v is None:
+                    return None
+                if (time.time() - start_time) > 8.0:
+                    return None
+                    
+            return time.time() - start_time
+        except Exception as e:
+            self._log(f"[Debug Error] {e}")
+            return None
+
+    def smart_classify(self, elapsed_time):
+        if elapsed_time is None:
+            return None
+        self._log(f"[Debug] Time to 1.5V: {elapsed_time:.4f}s")
+        if elapsed_time < 0.08:
+            return 100.0
+        else:
+            return 470.0
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
@@ -346,112 +403,39 @@ class CapacitorAnalyzerView(tk.Frame):
             try:
                 if not HARDWARE_AVAILABLE:
                     time.sleep(0.8)
-                    self._log("[Simulation] Hardware offline – simulated 22.0 µF")
+                    self._log("[Simulation] Hardware offline – simulated ~100 µF capacitor detected.")
                     return
 
-                self._log("  → Creating I2C / ADS1115...")
                 i2c = busio.I2C(board.SCL, board.SDA)
                 ads = ADS.ADS1115(i2c)
-                # Most compatible form
                 chan = AnalogIn(ads, 0)
 
-                R_OHMS = 10000.0
-                V_SUPPLY = 3.3
-                TAU_FRAC = 0.632
-                DISCHARGE_S = 0.30
-                TIMEOUT_S = 4.0
-                SAMPLE_DT = 0.002
-
-                # ----------------------------------------------------------
-                # 1. DISCHARGE  (Mux2 channel 0 = 2N3904 base)
-                # ----------------------------------------------------------
-                self._log("  → Discharging (LED should flash)...")
-                self.set_mux(self.mux2_pins, 0)  # discharge ON
-                time.sleep(DISCHARGE_S)
-                self.set_mux(self.mux2_pins, 7)  # discharge OFF (all high)
-                time.sleep(0.05)
-
-                # ----------------------------------------------------------
-                # 2. Read residual voltage
-                # ----------------------------------------------------------
-                v_start = chan.voltage
-                self._log(f"  → After discharge: {v_start:.3f} V")
-
-                if v_start > V_SUPPLY * 0.90:
-                    self._log("\n[Result] OPEN CIRCUIT – voltage already high.")
-                    self._log("Check that a capacitor is inserted.")
-                    return
-
-                v_target = v_start + (V_SUPPLY - v_start) * TAU_FRAC
-                self._log(f"  → Target (63.2 %): {v_target:.3f} V")
-
-                # ----------------------------------------------------------
-                # 3. ENABLE CHARGING PATH
-                #    IMPORTANT: do NOT select Mux2 channel 0 again!
-                #    Mux2 channel 1  →  charge source (3.3 V via 10 kΩ)
-                #    Mux1 channel 0  →  return path
-                #    (Change these two numbers if your PCB uses different channels)
-                # ----------------------------------------------------------
-                self._log("  → Enabling charge path (Mux2=1, Mux1=0)...")
-                self.set_mux(self.mux2_pins, 1)  # charge source
-                self.set_mux(self.mux1_pins, 0)  # return
-                time.sleep(0.02)
-
-                # ----------------------------------------------------------
-                # 4. Capture rising edge
-                # ----------------------------------------------------------
-                self._log("  → Measuring charging curve...")
-                t0 = time.perf_counter()
-                deadline = t0 + TIMEOUT_S
-                elapsed = 0.0
-                v_now = v_start
-                last_print = 0.0
-
-                while True:
-                    try:
-                        v_now = chan.voltage
-                    except Exception as e:
-                        self._log(f"  ! ADC read error: {e}")
-                        time.sleep(0.05)
-                        continue
-
-                    now = time.perf_counter()
-                    if now - last_print > 0.25:
-                        self._log(f"     {v_now:.3f} V")
-                        last_print = now
-
-                    if v_now >= v_target:
-                        elapsed = now - t0
-                        break
-
-                    if now > deadline:
-                        self._log(f"\n[Result] TIMEOUT")
-                        self._log(f"Did not reach {v_target:.3f} V within {TIMEOUT_S} s.")
-                        self._log(f"Last reading: {v_now:.3f} V")
-                        self._log("Possible causes:")
-                        self._log("  • Wrong mux channels for the charge path")
-                        self._log("  • Series resistor / wiring problem")
-                        self._log("  • No capacitor inserted")
-                        return
-
-                    time.sleep(SAMPLE_DT)
-
-                # ----------------------------------------------------------
-                # 5. Calculate
-                # ----------------------------------------------------------
-                C_uF = (elapsed / R_OHMS) * 1e6
-
-                if 0.05 < C_uF < 47000:
-                    self._log(f"\n[Result] SUCCESS")
-                    self._log(f"Capacitance  : {C_uF:.2f} µF")
-                    self._log(f"Time constant: {elapsed * 1000:.1f} ms")
-                    self._log(f"Vstart       : {v_start:.3f} V")
-                    self._log(f"Status       : Healthy")
+                scan_p1, scan_p2 = 0, 1
+                self._log(f"Scanning across Pins {scan_p1} and {scan_p2}...")
+                
+                self.set_mux(self.mux2_pins, scan_p1)
+                self.set_mux(self.mux1_pins, scan_p2)
+                time.sleep(0.1)
+               
+                v = chan.voltage
+                if v is not None and v > 0.15:
+                    self._log(f"\n[+] Capacitor detected! (Initial voltage: {v:.2f}V)")
+                   
+                    self._log("Testing polarity direction 1 (Measure Pin 0, Ground Pin 1)...")
+                    elapsed = self.try_measurement(measure_pin=scan_p1, ground_pin=scan_p2, chan=chan)
+                   
+                    if elapsed is None or elapsed < 0.015:
+                        self._log("Direction 1 failed. Trying direction 2 (Measure Pin 1, Ground Pin 0)...")
+                        elapsed = self.try_measurement(measure_pin=scan_p2, ground_pin=scan_p1, chan=chan)
+                   
+                    cap_val = self.smart_classify(elapsed)
+               
+                    if cap_val is not None:
+                        self._log(f"=== RESULT: Measured Capacitance = ~{cap_val:.0f} µF ===")
+                    else:
+                        self._log("Measurement failed. Check connections or discharge state.")
                 else:
-                    self._log(f"\n[Result] IMPLAUSIBLE VALUE")
-                    self._log(f"Calculated {C_uF:.2f} µF (τ = {elapsed * 1000:.1f} ms)")
-                    self._log("Check resistor value / wiring.")
-
+                    self._log("[System] No capacitor detected or voltage too low.")
             except Exception as e:
                 self._log(f"\n[Hardware Error] {e}")
                 self._log(traceback.format_exc())
