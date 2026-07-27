@@ -40,7 +40,7 @@ class SmartPinMasterApp(tk.Tk):
         self.container.pack(fill="both", expand=True)
         
         self.frames = {}
-        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, SettingsView):
+        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
             frame = F(parent=self.container, controller=self)
             self.frames[frame_name] = frame
@@ -60,7 +60,6 @@ class MainDashboard(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         
-        # Header Bar
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -72,7 +71,6 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # Content App Folder Grid
         content_grid = tk.Frame(self, bg="#0f172a")
         content_grid.pack(fill="both", expand=True, padx=30, pady=30)
         
@@ -119,7 +117,6 @@ class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         
-        # Header
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -128,7 +125,6 @@ class TransistorCheckerView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
         tk.Label(header, text="TRANSISTOR CHECKER MODULE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
         
-        # Body Panel
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=30)
         
@@ -140,9 +136,8 @@ class TransistorCheckerView(tk.Frame):
                              relief="flat", padx=20, pady=10, command=self.execute_transistor_test)
         test_btn.pack(anchor="w")
 
-        # Setup Multiplexer GPIO hardware channels if available
-        self.mux1_pins = [4, 5, 6]  # Measurement MUX (S0, S1, S2)
-        self.mux2_pins = [7, 8, 9]  # Bias / Source MUX (S0, S1, S2)
+        self.mux1_pins = [4, 5, 6]
+        self.mux2_pins = [7, 8, 9]
         if HARDWARE_AVAILABLE:
             try:
                 GPIO.setmode(GPIO.BCM)
@@ -177,7 +172,6 @@ class TransistorCheckerView(tk.Frame):
                         except OSError:
                             return None
 
-                    # Perform full component analysis using working algorithm
                     readings = {}
                     any_connection = False
 
@@ -199,7 +193,6 @@ class TransistorCheckerView(tk.Frame):
                         if total_readings > 0 and (shorted_count / total_readings) > 0.6:
                             res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
                         else:
-                            # 1. Check NPN
                             found_type = None
                             match_pin_b, match_pin_c, match_pin_e = None, None, None
                             
@@ -227,7 +220,6 @@ class TransistorCheckerView(tk.Frame):
                                     found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                                     break
 
-                            # 2. Check PNP if NPN didn't match
                             if not found_type:
                                 for base in [0, 1, 2]:
                                     others = [p for p in [0, 1, 2] if p != base]
@@ -249,7 +241,6 @@ class TransistorCheckerView(tk.Frame):
                                         break
 
                             if found_type:
-                                # Calculate hFE
                                 hfe_val = 150
                                 try:
                                     if found_type == "NPN":
@@ -357,10 +348,10 @@ class SettingsView(tk.Frame):
         wifi_card.pack(fill="x", pady=10)
         
         tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
-        tk.Label(wifi_card, text="Scan local wireless interfaces and connections.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
+        tk.Label(wifi_card, text="Configure Wi-Fi connections and select wireless networks.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
         
-        tk.Button(wifi_card, text="Scan Available Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5, command=self.scan_wifi).pack(anchor="w")
+        tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
 
     def perform_ota_update(self):
         self.update_status_lbl.config(text="Status: Running update script...", fg="#f59e0b")
@@ -381,13 +372,171 @@ class SettingsView(tk.Frame):
 
         self.after(1500, lambda: os._exit(0))
 
-    def scan_wifi(self):
-        try:
-            nets = subprocess.check_output(["nmcli", "-t", "-f", "SSID", "dev", "wifi"]).decode()
-            ssid_list = [line for line in nets.split('\n') if line]
-            messagebox.showinfo("Available Wi-Fi Networks", "\n".join(ssid_list[:10]))
-        except Exception:
-            messagebox.showinfo("Network Info", "NetworkManager (nmcli) service not active.")
+
+class WifiManagerView(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg="#0f172a")
+        self.controller = controller
+        
+        header = tk.Frame(self, bg="#1e293b", height=60)
+        header.pack(fill="x", side="top")
+        header.pack_propagate(False)
+        
+        tk.Button(header, text="← Back to Settings", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView")).pack(side="left", padx=20)
+        tk.Label(header, text="WI-FI NETWORK MANAGER", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
+        
+        body = tk.Frame(self, bg="#0f172a")
+        body.pack(fill="both", expand=True, padx=40, pady=20)
+        
+        # Info & Status bar
+        self.status_lbl = tk.Label(body, text="Status: Ready to scan networks", fg="#38bdf8", bg="#0f172a", font=("Helvetica", 11, "bold"))
+        self.status_lbl.pack(anchor="w", pady=(0, 10))
+        
+        # Network Listbox Frame
+        list_frame = tk.Frame(body, bg="#1e293b", padx=10, pady=10)
+        list_frame.pack(fill="both", expand=True, pady=(0, 15))
+        
+        scrollbar = tk.Scrollbar(list_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        self.net_listbox = tk.Listbox(list_frame, bg="#0f172a", fg="#f8fafc", font=("Courier", 11),
+                                      selectbackground="#3b82f6", selectforeground="#ffffff",
+                                      bd=0, highlightthickness=0, yscrollcommand=scrollbar.set)
+        self.net_listbox.pack(fill="both", expand=True)
+        scrollbar.config(command=self.net_listbox.yview)
+        
+        # Action Buttons Frame
+        btn_frame = tk.Frame(body, bg="#0f172a")
+        btn_frame.pack(fill="x")
+        
+        tk.Button(btn_frame, text="Scan Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=8, command=self.scan_networks).pack(side="left", padx=(0, 10))
+        
+        tk.Button(btn_frame, text="Connect Selected", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=8, command=self.connect_to_selected).pack(side="left")
+
+        # Auto-scan on entry
+        self.after(200, self.scan_networks)
+
+    def scan_networks(self):
+        self.status_lbl.config(text="Status: Scanning available wireless networks...", fg="#f59e0b")
+        self.net_listbox.delete(0, tk.END)
+        self.update_idletasks()
+        
+        def run_scan():
+            networks = []
+            try:
+                # Trigger a rescan if possible, then grab SSIDs and signal strength
+                subprocess.run(["nmcli", "device", "wifi", "rescan"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                raw = subprocess.check_output(["nmcli", "-t", "-f", "IN-USE,SSID,SECURITY", "device", "wifi"]).decode()
+                
+                seen = set()
+                for line in raw.split("\n"):
+                    if not line:
+                        continue
+                    parts = line.split(":")
+                    if len(parts) >= 2:
+                        in_use = parts[0] == "*"
+                        ssid = parts[1].strip()
+                        security = parts[2].strip() if len(parts) > 2 else ""
+                        
+                        if ssid and ssid not in seen:
+                            seen.add(ssid)
+                            prefix = "CONNECTED → " if in_use else "            "
+                            sec_tag = f" [{security}]" if security and security != "--" else " [Open]"
+                            networks.append((f"{prefix}{ssid}{sec_tag}", ssid))
+            except Exception as e:
+                print(f"Wi-Fi scan error: {e}")
+                
+            def update_ui():
+                if networks:
+                    for display_str, ssid in networks:
+                        self.net_listbox.insert(tk.END, display_str)
+                        # Store actual SSID reference in listbox tuple mapping if needed
+                    self.status_lbl.config(text=f"Status: Found {len(networks)} networks.", fg="#10b981")
+                else:
+                    self.net_listbox.insert(tk.END, "No networks found or NetworkManager inactive.")
+                    self.status_lbl.config(text="Status: Scan complete. No networks available.", fg="#ef4444")
+            
+            self.after(0, update_ui)
+
+        threading.Thread(target=run_scan, daemon=True).start()
+
+    def connect_to_selected(self):
+        selected_idx = self.net_listbox.curselection()
+        if not selected_idx:
+            messagebox.showwarning("Selection Required", "Please select a network from the list first.")
+            return
+            
+        line_text = self.net_listbox.get(selected_idx[0])
+        if "No networks found" in line_text:
+            return
+            
+        # Parse out clean SSID from the list item string format
+        clean_item = line_text.replace("CONNECTED → ", "").strip()
+        # Strip security bracket tags like [WPA2] or [Open]
+        if "[" in clean_item:
+            clean_item = clean_item.split("[")[0].strip()
+            
+        ssid = clean_item
+        
+        # Create a touch-friendly password prompt window
+        pwd_win = tk.Toplevel(self)
+        pwd_win.title(f"Connect to {ssid}")
+        pwd_win.geometry("400x230")
+        pwd_win.configure(bg="#1e293b")
+        pwd_win.transient(self)
+        pwd_win.grab_set()
+        
+        tk.Label(pwd_win, text=f"Joining Network: {ssid}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(pady=(20, 10))
+        tk.Label(pwd_win, text="Enter Wi-Fi Password (leave blank if open):", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", padx=30)
+        
+        pwd_entry = tk.Entry(pwd_win, show="*", bg="#0f172a", fg="#ffffff", font=("Helvetica", 12), bd=0, relief="flat", insertbackground="white")
+        pwd_entry.pack(fill="x", padx=30, pady=10, ipady=5)
+        pwd_entry.focus()
+        
+        def execute_connect():
+            password = pwd_entry.get()
+            pwd_win.destroy()
+            
+            self.status_lbl.config(text=f"Status: Connecting to {ssid}...", fg="#f59e0b")
+            self.update_idletasks()
+            
+            def connect_thread():
+                try:
+                    if password:
+                        cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
+                    else:
+                        cmd = ["nmcli", "device", "wifi", "connect", ssid]
+                        
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+                    
+                    if res.returncode == 0:
+                        msg = f"Successfully connected to {ssid}!"
+                        status_color = "#10b981"
+                    else:
+                        msg = f"Connection failed: {res.stderr.strip()}"
+                        status_color = "#ef4444"
+                except subprocess.TimeoutExpired:
+                    msg = "Connection timed out."
+                    status_color = "#ef4444"
+                except Exception as e:
+                    msg = f"Error: {e}"
+                    status_color = "#ef4444"
+                    
+                def post_connect():
+                    self.status_lbl.config(text=f"Status: {msg}", fg=status_color)
+                    messagebox.showinfo("Wi-Fi Connection", msg)
+                    self.scan_networks()
+                    
+                self.after(0, post_connect)
+
+            threading.Thread(target=connect_thread, daemon=True).start()
+
+        tk.Button(pwd_win, text="Connect", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=20, pady=8, command=execute_connect).pack(pady=15)
+
 
 if __name__ == "__main__":
     app = SmartPinMasterApp()
