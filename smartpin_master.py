@@ -802,4 +802,3 @@ class WifiManagerView(tk.Frame):
 if __name__ == "__main__":
     app = SmartPinMasterApp()
     app.mainloop()
-```[cite: 1]
