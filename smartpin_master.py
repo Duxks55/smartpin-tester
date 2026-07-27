@@ -217,8 +217,10 @@ class TransistorCheckerView(tk.Frame):
                             v = get_voltage(p1, p2)
                             if v is not None:
                                 readings[(p1, p2)] = v
-                                if v > 0.05:
+                                # Require a distinct voltage drop threshold to confirm real connection path
+                                if v > 0.15:
                                     any_connection = True
+
                     if not any_connection:
                         res_text = "\n[Result] EMPTY: No component detected.\n"
                     else:
@@ -256,14 +258,17 @@ class TransistorCheckerView(tk.Frame):
                                 for base in [0, 1, 2]:
                                     others = [p for p in [0, 1, 2] if p != base]
                                     npn_match = True
+                                    valid_drops = 0
                                     for target in others:
                                         v = readings.get((base, target), 0)
-                                        # Accept valid base-emitter / base-collector forward drops
-                                        if not (0.10 < v < 1.0 or v > 2.0):
+                                        # Strict semiconductor junction drop validation (prevent floating pin noise)
+                                        if 0.40 < v < 0.90:
+                                            valid_drops += 1
+                                        elif not (0.10 < v < 1.0 or v > 2.0):
                                             npn_match = False
                                             break
-                                    if npn_match:
-                                        # Streamlined NPN validation without blocking valid 2N3904 paths
+                                    # Must show at least one genuine PN junction drop to qualify as a valid transistor
+                                    if npn_match and valid_drops > 0:
                                         v_a = readings.get((base, others[0]), 0)
                                         v_b = readings.get((base, others[1]), 0)
                                         if v_a > v_b:
@@ -292,7 +297,7 @@ class TransistorCheckerView(tk.Frame):
                                             f"Pinout -> Base: Pin {match_pin_b}, Collector: Pin {match_pin_c}, Emitter: Pin {match_pin_e}\n"
                                             f"Estimated hFE (Gain): {hfe_val}\n")
                             else:
-                                res_text = "\n[Result] UNKNOWN / DEAD: Component detected but did not match standard BJT signatures.\n"
+                                res_text = "\n[Result] EMPTY / UNKNOWN: No valid BJT semiconductor junction signatures found.\n"
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline. NPN Transistor verified (Base: 1, Collector: 2, Emitter: 3, hFE: 185).\n"
