@@ -380,9 +380,7 @@ class SettingsView(tk.Frame):
             update_available = False
             remote_version = "Unknown"
             try:
-                # Replace with your actual GitHub raw version file or release API URL
-                # Example checking a version.txt file in your repo branch main:
-                url = "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/version.txt"
+                url = "https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
                     remote_version = response.read().decode('utf-8').strip()
@@ -398,7 +396,6 @@ class SettingsView(tk.Frame):
                     self.update_now_btn.pack(side="left")
                     
                     if manual:
-                        # Explicit manual check popup offering Update Now vs Later
                         if messagebox.askyesno("Update Available", f"A new version ({remote_version}) is available on GitHub!\n\nWould you like to install it now?"):
                             self.perform_ota_update()
                 else:
