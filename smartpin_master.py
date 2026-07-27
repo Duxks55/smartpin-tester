@@ -197,7 +197,7 @@ class TransistorCheckerView(tk.Frame):
 
                             self.set_mux(self.mux2_pins, anode_pin)
                             self.set_mux(self.mux1_pins, cathode_pin)
-                            time.sleep(0.05)  # Increased slightly for hardware stabilization
+                            time.sleep(0.05)
                             v = chan.voltage
                             
                             # Clean up state immediately after reading
@@ -222,10 +222,11 @@ class TransistorCheckerView(tk.Frame):
                     if not any_connection:
                         res_text = "\n[Result] EMPTY: No component detected.\n"
                     else:
-                        shorted_count = sum(1 for v in readings.values() if v < 0.05)
+                        shorted_count = sum(1 for v in readings.values() if v < 0.03)
                         total_readings = len(readings)
 
-                        if total_readings > 0 and (shorted_count / total_readings) > 0.6:
+                        # Relaxed short threshold slightly to prevent false failures
+                        if total_readings > 0 and (shorted_count / total_readings) > 0.75:
                             res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
                         else:
                             found_type = None
@@ -237,7 +238,7 @@ class TransistorCheckerView(tk.Frame):
                                 pnp_match = True
                                 for source_pin in others:
                                     v = readings.get((source_pin, base), 0)
-                                    if not (0.12 < v < 0.95 or v > 2.2):
+                                    if not (0.10 < v < 1.0 or v > 2.0):
                                         pnp_match = False
                                         break
                                 if pnp_match:
@@ -250,21 +251,19 @@ class TransistorCheckerView(tk.Frame):
                                     found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
                                     break
 
-                            # --- IF NOT PNP, CHECK FOR NPN ---
+                            # --- CHECK FOR NPN ---
                             if not found_type:
                                 for base in [0, 1, 2]:
                                     others = [p for p in [0, 1, 2] if p != base]
                                     npn_match = True
                                     for target in others:
                                         v = readings.get((base, target), 0)
-                                        if not (0.12 < v < 0.95 or v > 2.2):
+                                        # Accept valid base-emitter / base-collector forward drops
+                                        if not (0.10 < v < 1.0 or v > 2.0):
                                             npn_match = False
                                             break
                                     if npn_match:
-                                        ce_forward = readings.get((others[0], others[1]), 0)
-                                        ce_reverse = readings.get((others[1], others[0]), 0)
-                                        if ce_reverse > ce_forward and ce_reverse > 1.5:
-                                            continue
+                                        # Streamlined NPN validation without blocking valid 2N3904 paths
                                         v_a = readings.get((base, others[0]), 0)
                                         v_b = readings.get((base, others[1]), 0)
                                         if v_a > v_b:
