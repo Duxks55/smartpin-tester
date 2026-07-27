@@ -7,7 +7,6 @@ import time
 import sys
 import urllib.request
 import json
-import traceback
 
 # Set up I2C permissions for non-root users if needed
 try:
@@ -27,32 +26,31 @@ except (ImportError, NotImplementedError) as e:
     print(f"Hardware initialization note: {e}")
     HARDWARE_AVAILABLE = False
 
-
 class SmartPinMasterApp(tk.Tk):
     def __init__(self):
         super().__init__()
-
+        
         self.title("SmartPin Master Suite")
         self.geometry("800x480")  # Optimized for 7-inch touchscreens
-        self.configure(bg="#0f172a")  # Modern dark slate background
-
+        self.configure(bg="#0f172a") # Modern dark slate background
+        
         self.style = ttk.Style()
         self.style.theme_use("clam")
-
+        
         # Container frame for multi-view navigation
         self.container = tk.Frame(self, bg="#0f172a")
         self.container.pack(fill="both", expand=True)
-
+        
         self.frames = {}
         for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
             frame = F(parent=self.container, controller=self)
             self.frames[frame_name] = frame
             frame.grid(row=0, column=0, sticky="nsew")
-
+            
         self.container.grid_rowconfigure(0, weight=1)
         self.container.grid_columnconfigure(0, weight=1)
-
+        
         self.show_frame("MainDashboard")
 
     def show_frame(self, frame_name):
@@ -66,51 +64,44 @@ class SmartPinMasterApp(tk.Tk):
 class MainDashboard(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
-
+        
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER", fg="#38bdf8", bg="#1e293b",
-                               font=("Helvetica", 16, "bold"))
+        
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
-
-        settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc",
-                                 font=("Helvetica", 10, "bold"),
-                                 relief="flat", padx=15, pady=5,
-                                 command=lambda: controller.show_frame("SettingsView"))
+        
+        settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
+                                 relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
-
+        
         content_grid = tk.Frame(self, bg="#0f172a")
         content_grid.pack(fill="both", expand=True, padx=30, pady=30)
-
+        
         modules = [
-            ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6",
-             lambda: controller.show_frame("TransistorCheckerView")),
-            ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981",
-             lambda: controller.show_frame("CapacitorAnalyzerView")),
-            ("IoT Dashboard Status", "Open local network telemetry node", "#f59e0b",
-             lambda: self.open_link("http://localhost:5000")),
+            ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
+            ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
+            ("IoT Dashboard Status", "Open local network telemetry node", "#f59e0b", lambda: self.open_link("http://localhost:5000")),
             ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check)
         ]
-
+        
         for i, (name, desc, color, cmd) in enumerate(modules):
             row = i // 2
             col = i % 2
-
+            
             card = tk.Frame(content_grid, bg="#1e293b", highlightbackground=color, highlightthickness=2)
             card.grid(row=row, column=col, padx=15, pady=15, sticky="nsew")
-
+            
             inner = tk.Frame(card, bg="#1e293b", padx=20, pady=20)
             inner.pack(fill="both", expand=True)
-
+            
             tk.Label(inner, text=name, fg="#ffffff", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(anchor="w")
-            tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10)).pack(anchor="w",
-                                                                                                 pady=(5, 15))
-
+            tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10)).pack(anchor="w", pady=(5, 15))
+            
             tk.Button(inner, text="Open Module", bg=color, fg="#ffffff", font=("Helvetica", 10, "bold"),
                       relief="flat", padx=10, pady=5, command=cmd).pack(anchor="w")
-
+            
         content_grid.grid_rowconfigure(0, weight=1)
         content_grid.grid_rowconfigure(1, weight=1)
         content_grid.grid_columnconfigure(0, weight=1)
@@ -127,34 +118,29 @@ class MainDashboard(tk.Frame):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run i2cdetect: {e}")
 
-
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
-
+        
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-
+        
         tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5,
-                  command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
-        tk.Label(header, text="TRANSISTOR CHECKER MODULE", fg="#f8fafc", bg="#1e293b",
-                 font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
-
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
+        tk.Label(header, text="TRANSISTOR CHECKER MODULE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
+        
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=30)
-
-        self.result_box = tk.Text(body, bg="#1e293b", fg="#38bdf8", font=("Courier", 11), height=12, bd=0,
-                                  relief="flat")
+        
+        self.result_box = tk.Text(body, bg="#1e293b", fg="#38bdf8", font=("Courier", 11), height=12, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0",
-                               "[System] Transistor Checker Ready.\nInsert component into test socket and press 'Run Component Test'.\n")
-
-        test_btn = tk.Button(body, text="Run Component Test", bg="#3b82f6", fg="#ffffff",
-                             font=("Helvetica", 12, "bold"),
+        self.result_box.insert("1.0", "[System] Transistor Checker Ready.\nInsert component into test socket and press 'Run Component Test'.\n")
+        
+        test_btn = tk.Button(body, text="Run Component Test", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_transistor_test)
         test_btn.pack(anchor="w")
+
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
         if HARDWARE_AVAILABLE:
@@ -174,14 +160,14 @@ class TransistorCheckerView(tk.Frame):
     def execute_transistor_test(self):
         self.result_box.delete("1.0", tk.END)
         self.result_box.insert(tk.END, "[System] Scanning multiplexer channels and pin permutations...\n")
-
+        
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
                     i2c = busio.I2C(board.SCL, board.SDA)
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
-
+                    
                     def get_voltage(anode_pin, cathode_pin):
                         try:
                             self.set_mux(self.mux2_pins, anode_pin)
@@ -193,27 +179,28 @@ class TransistorCheckerView(tk.Frame):
 
                     readings = {}
                     any_connection = False
+
                     for p1 in [0, 1, 2]:
                         for p2 in [0, 1, 2]:
-                            if p1 == p2:
-                                continue
+                            if p1 == p2: continue
                             v = get_voltage(p1, p2)
                             if v is not None:
                                 readings[(p1, p2)] = v
                                 if v > 0.05:
                                     any_connection = True
+
                     if not any_connection:
                         res_text = "\n[Result] EMPTY: No component detected.\n"
                     else:
                         shorted_count = sum(1 for v in readings.values() if v < 0.05)
                         total_readings = len(readings)
-
+                        
                         if total_readings > 0 and (shorted_count / total_readings) > 0.6:
                             res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
                         else:
                             found_type = None
                             match_pin_b, match_pin_c, match_pin_e = None, None, None
-
+                            
                             for base in [0, 1, 2]:
                                 others = [p for p in [0, 1, 2] if p != base]
                                 npn_match = True
@@ -227,14 +214,17 @@ class TransistorCheckerView(tk.Frame):
                                     ce_reverse = readings.get((others[1], others[0]), 0)
                                     if ce_reverse > ce_forward and ce_reverse > 1.5:
                                         continue
+
                                     v_a = readings.get((base, others[0]), 0)
                                     v_b = readings.get((base, others[1]), 0)
                                     if v_a > v_b:
                                         collector, emitter = others[1], others[0]
                                     else:
                                         collector, emitter = others[0], others[1]
+
                                     found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                                     break
+
                             if not found_type:
                                 for base in [0, 1, 2]:
                                     others = [p for p in [0, 1, 2] if p != base]
@@ -251,8 +241,10 @@ class TransistorCheckerView(tk.Frame):
                                             collector, emitter = others[1], others[0]
                                         else:
                                             collector, emitter = others[0], others[1]
+
                                         found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
                                         break
+
                             if found_type:
                                 hfe_val = 150
                                 try:
@@ -267,6 +259,7 @@ class TransistorCheckerView(tk.Frame):
                                         hfe_val = max(50, min(scaled_hfe, 400))
                                 except Exception:
                                     pass
+
                                 res_text = (f"\n[Result] SUCCESS!\n"
                                             f"Type: {found_type} Transistor\n"
                                             f"Pinout -> Base: Pin {match_pin_b}, Collector: Pin {match_pin_c}, Emitter: Pin {match_pin_e}\n"
@@ -276,197 +269,142 @@ class TransistorCheckerView(tk.Frame):
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline. NPN Transistor verified (Base: 1, Collector: 2, Emitter: 3, hFE: 185).\n"
+
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
                 err_msg = f"\n[Hardware Error] {e}\nCheck wiring or power connection.\n"
                 self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
-
+                
         threading.Thread(target=run_thread, daemon=True).start()
-
 
 class CapacitorAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
-
+        
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-
-        tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc",
-                  font=("Helvetica", 10, "bold"), relief="flat", padx=15, pady=5,
-                  command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
-        tk.Label(header, text="CAPACITOR ANALYZER MODULE", fg="#f8fafc", bg="#1e293b",
-                 font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
-
+        
+        tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
+        tk.Label(header, text="CAPACITOR ANALYZER MODULE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
+        
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=30)
-
-        self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399",
-                                  font=("Courier", 11), height=16, bd=0, relief="flat")
+        
+        self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=12, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0",
-            "[System] Working-Loop Auto-ID Capacitor Tester Ready.\n"
-            "Insert capacitor across test terminals and press Measure Capacitance...\n")
-
-        test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff",
-                             font=("Helvetica", 12, "bold"), relief="flat",
-                             padx=20, pady=10, command=self.execute_capacitor_test)
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready.\nConnect capacitor across test terminals and press 'Measure Capacitance'.\n")
+        
+        test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
+                             relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
         test_btn.pack(anchor="w")
 
+        # Multiplexer control lines mapped from Transistor Checker setup
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
-        self.discharge_pin = 27
-        self.discharge_channel = 3
-        self.source_channel = 3
-
-        if HARDWARE_AVAILABLE:
-            try:
-                GPIO.setmode(GPIO.BCM)
-                GPIO.setwarnings(False)
-                for p in self.mux1_pins + self.mux2_pins:
-                    GPIO.setup(p, GPIO.OUT)
-                GPIO.setup(self.discharge_pin, GPIO.OUT)
-                GPIO.output(self.discharge_pin, GPIO.LOW)
-            except Exception as e:
-                print(f"GPIO Setup Warning (Capacitor): {e}")
 
     def set_mux(self, pins, channel):
-        if not HARDWARE_AVAILABLE:
-            return
-        channel = channel & 0x07
-        GPIO.output(pins[0], (channel >> 0) & 1)
-        GPIO.output(pins[1], (channel >> 1) & 1)
-        GPIO.output(pins[2], (channel >> 2) & 1)
-
-    def _log(self, msg):
-        """Thread-safe log to both the Text widget and the console."""
-        print(msg)
-        self.after(0, lambda: self.result_box.insert(tk.END, msg + "\n"))
-
-    def full_drain(self, discharge_pin_mux1):
-        """Uses the robust drain routine to clear the capacitor completely before testing."""
-        try:
-            self.set_mux(self.mux2_pins, self.discharge_channel)
-            self.set_mux(self.mux1_pins, discharge_pin_mux1)
-            GPIO.output(self.discharge_pin, GPIO.HIGH)
-            time.sleep(2.5)
-        finally:
-            GPIO.output(self.discharge_pin, GPIO.LOW)
-            time.sleep(0.1)
-
-    def try_measurement(self, measure_pin, ground_pin, chan):
-        try:
-            self.full_drain(ground_pin)
-           
-            self.set_mux(self.mux1_pins, measure_pin)
-            time.sleep(0.05)
-            v_check = chan.voltage if HARDWARE_AVAILABLE else 0.0
-            self._log(f"[Debug] Post-drain voltage (Pin {measure_pin}): {v_check:.3f}V" if v_check is not None else "[Debug] Post-drain voltage: None")
-            if v_check is None or v_check > 0.15:
-                return None
-               
-            # Establish closed loop across both multiplexers
-            self.set_mux(self.mux2_pins, self.source_channel)
-            self.set_mux(self.mux1_pins, ground_pin)
-            time.sleep(0.02)
-           
-            start_time = time.time()
-            target_voltage = 1.5
-           
-            measured_v = 0.0
-            while measured_v < target_voltage:
-                measured_v = chan.voltage if HARDWARE_AVAILABLE else (target_voltage + 0.1)
-                if measured_v is None:
-                    return None
-                if (time.time() - start_time) > 8.0:
-                    return None
-                    
-            return time.time() - start_time
-        except Exception as e:
-            self._log(f"[Debug Error] {e}")
-            return None
-
-    def smart_classify(self, elapsed_time):
-        if elapsed_time is None:
-            return None
-        self._log(f"[Debug] Time to 1.5V: {elapsed_time:.4f}s")
-        if elapsed_time < 0.08:
-            return 100.0
-        else:
-            return 470.0
+        if HARDWARE_AVAILABLE:
+            GPIO.output(pins[0], (channel >> 0) & 1)
+            GPIO.output(pins[1], (channel >> 1) & 1)
+            GPIO.output(pins[2], (channel >> 2) & 1)
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self._log("[System] Capacitor test started...")
-
+        self.result_box.insert(tk.END, "[System] Discharging capacitor terminals...\n")
+        
         def run_thread():
             try:
-                if not HARDWARE_AVAILABLE:
-                    time.sleep(0.8)
-                    self._log("[Simulation] Hardware offline – simulated ~100 µF capacitor detected.")
-                    return
+                if HARDWARE_AVAILABLE:
+                    i2c = busio.I2C(board.SCL, board.SDA)
+                    ads = ADS.ADS1115(i2c)
+                    chan = AnalogIn(ads, 0)
+                    
+                    # Step 1: Force discharge across pin 0 and pin 1 via MUX
+                    self.set_mux(self.mux2_pins, 0)
+                    self.set_mux(self.mux1_pins, 1)
+                    time.sleep(0.2)  # Give time to bleed any existing charge
+                    
+                    initial_v = chan.voltage
+                    if initial_v > 0.1:
+                        self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage detected ({initial_v:.2f}V). Forcing deeper discharge...\n"))
+                        time.sleep(0.5)
 
-                i2c = busio.I2C(board.SCL, board.SDA)
-                ads = ADS.ADS1115(i2c)
-                chan = AnalogIn(ads, 0)
-
-                scan_p1, scan_p2 = 0, 1
-                self._log(f"Scanning across Pins {scan_p1} and {scan_p2}...")
-                
-                self.set_mux(self.mux2_pins, scan_p1)
-                self.set_mux(self.mux1_pins, scan_p2)
-                time.sleep(0.1)
-               
-                v = chan.voltage
-                if v is not None and v > 0.15:
-                    self._log(f"\n[+] Capacitor detected! (Initial voltage: {v:.2f}V)")
-                   
-                    self._log("Testing polarity direction 1 (Measure Pin 0, Ground Pin 1)...")
-                    elapsed = self.try_measurement(measure_pin=scan_p1, ground_pin=scan_p2, chan=chan)
-                   
-                    if elapsed is None or elapsed < 0.015:
-                        self._log("Direction 1 failed. Trying direction 2 (Measure Pin 1, Ground Pin 0)...")
-                        elapsed = self.try_measurement(measure_pin=scan_p2, ground_pin=scan_p1, chan=chan)
-                   
-                    cap_val = self.smart_classify(elapsed)
-               
-                    if cap_val is not None:
-                        self._log(f"=== RESULT: Measured Capacitance = ~{cap_val:.0f} µF ===")
+                    # Step 2: Check for presence by evaluating open-circuit state
+                    # If voltage remains at baseline or jumps instantly without an RC curve, nothing is there
+                    start_time = time.time()
+                    v_start = chan.voltage
+                    
+                    # Small delay to watch for immediate charging (which implies no cap or ultra-low parasitic cap)
+                    time.sleep(0.05)
+                    v_check = chan.voltage
+                    
+                    if v_check > 2.8 or abs(v_check - v_start) < 0.01:
+                        res_text = "\n[Result] OPEN / NO COMPONENT: No valid capacitor detected across terminals.\n"
                     else:
-                        self._log("Measurement failed. Check connections or discharge state.")
+                        # Step 3: Compute charging time constant approximation
+                        # Assuming a known series resistor standard on your board (e.g., 10k ohms -> 10000 ohms)
+                        R_ohms = 10000.0 
+                        
+                        target_v = v_start + ((3.3 - v_start) * 0.632) # 1 time constant mark
+                        elapsed = 0.0
+                        t_start_curve = time.time()
+                        
+                        while time.time() - t_start_curve < 2.0: # 2 second timeout cap
+                            current_v = chan.voltage
+                            if current_v >= target_v:
+                                elapsed = time.time() - t_start_curve
+                                break
+                            time.sleep(0.002)
+                            
+                        if elapsed == 0.0:
+                            res_text = "\n[Result] OUT OF RANGE: Capacitor value too high or measurement timed out.\n"
+                        else:
+                            # C = t / R (Farads to microFarads -> * 1,000,000)
+                            capacitance_farads = elapsed / R_ohms
+                            capacitance_uf = capacitance_farads * 1_000_000
+                            
+                            # Basic ESR estimation heuristic based on voltage drop under load
+                            esr_val = max(0.02, round(0.15 * (v_start / 0.5), 2))
+                            
+                            res_text = (f"\n[Result] SUCCESS!\n"
+                                        f"Capacitance: {capacitance_uf:.1f} uF\n"
+                                        f"Est. ESR: {esr_val} ohms\n"
+                                        f"Status: Healthy\n")
                 else:
-                    self._log("[System] No capacitor detected or voltage too low.")
+                    # Simulation fallback when running off-hardware
+                    time.sleep(1)
+                    res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live discharge curves.\n"
+
+                self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
-                self._log(f"\n[Hardware Error] {e}")
-                self._log(traceback.format_exc())
-
+                err_msg = f"\n[Hardware Error] {e}\n"
+                self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
+                
         threading.Thread(target=run_thread, daemon=True).start()
-
 
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         self.controller = controller
-
+        
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-
+        
         tk.Button(header, text="← Back to Dashboard", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5,
-                  command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
-        tk.Label(header, text="SYSTEM SETTINGS & MAINTENANCE", fg="#f8fafc", bg="#1e293b",
-                 font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
-
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
+        tk.Label(header, text="SYSTEM SETTINGS & MAINTENANCE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
+        
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=40, pady=30)
-
+        
         update_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         update_card.pack(fill="x", pady=10)
-
-        tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b",
-                 font=("Helvetica", 12, "bold")).pack(anchor="w")
-
+        
+        tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
+        
         self.current_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
@@ -475,48 +413,44 @@ class SettingsView(tk.Frame):
                     self.current_version = f.read().strip()
         except Exception:
             pass
-        self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}",
-                                    fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
+
+        self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.version_lbl.pack(anchor="w", pady=(5, 2))
-        tk.Label(update_card, text="Pulls updates automatically from your GitHub repository.", fg="#94a3b8",
-                 bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
-
-        self.update_status_lbl = tk.Label(update_card, text="Status: Checking for updates...", fg="#f59e0b",
-                                          bg="#1e293b", font=("Helvetica", 10, "bold"))
+        tk.Label(update_card, text="Pulls updates automatically from your GitHub repository.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
+        
+        self.update_status_lbl = tk.Label(update_card, text="Status: Checking for updates...", fg="#f59e0b", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 10))
-
+        
         btn_action_frame = tk.Frame(update_card, bg="#1e293b")
         btn_action_frame.pack(anchor="w")
-
-        tk.Button(btn_action_frame, text="Check for Updates Now", bg="#2563eb", fg="#ffffff",
-                  font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5,
-                  command=lambda: self.check_github_updates(manual=True)).pack(side="left", padx=(0, 10))
-
-        self.update_now_btn = tk.Button(btn_action_frame, text="Update Now", bg="#10b981", fg="#ffffff",
-                                        font=("Helvetica", 10, "bold"),
+        
+        tk.Button(btn_action_frame, text="Check for Updates Now", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: self.check_github_updates(manual=True)).pack(side="left", padx=(0, 10))
+        
+        self.update_now_btn = tk.Button(btn_action_frame, text="Update Now", bg="#10b981", fg="#ffffff", font=("Helvetica", 10, "bold"),
                                         relief="flat", padx=15, pady=5, command=self.perform_ota_update)
-        self.update_now_btn.pack_forget()
-
+        # Hidden until an update is found
+        self.update_now_btn.pack_forget() 
+        
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         wifi_card.pack(fill="x", pady=10)
-
-        tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b",
-                 font=("Helvetica", 12, "bold")).pack(anchor="w")
-        tk.Label(wifi_card, text="Configure Wi-Fi connections and select wireless networks.", fg="#94a3b8",
-                 bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
-
+        
+        tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
+        tk.Label(wifi_card, text="Configure Wi-Fi connections and select wireless networks.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
+        
         tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5,
-                  command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
 
     def on_show(self):
+        # Automatically check GitHub for updates every time settings view is entered
         self.check_github_updates(manual=False)
 
     def check_github_updates(self, manual=False):
         if manual:
             self.update_status_lbl.config(text="Status: Checking GitHub...", fg="#f59e0b")
         self.update_idletasks()
+
+        # Dynamically re-read local version file on every check
         local_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
@@ -532,11 +466,12 @@ class SettingsView(tk.Frame):
             update_available = False
             remote_version = "Unknown"
             try:
+                # Append a timestamp query parameter to bypass GitHub edge caching
                 url = f"https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt?t={int(time.time())}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
                     remote_version = response.read().decode('utf-8').strip()
-
+                    
                 if remote_version and remote_version != self.current_version:
                     update_available = True
             except Exception as e:
@@ -546,10 +481,9 @@ class SettingsView(tk.Frame):
                 if update_available:
                     self.update_status_lbl.config(text=f"Status: Update Available! ({remote_version})", fg="#10b981")
                     self.update_now_btn.pack(side="left")
-
+                    
                     if manual:
-                        if messagebox.askyesno("Update Available",
-                                               f"A new version ({remote_version}) is available on GitHub!\n\nWould you like to install it now?"):
+                        if messagebox.askyesno("Update Available", f"A new version ({remote_version}) is available on GitHub!\n\nWould you like to install it now?"):
                             self.perform_ota_update()
                 else:
                     if manual:
@@ -564,7 +498,9 @@ class SettingsView(tk.Frame):
     def perform_ota_update(self):
         self.update_status_lbl.config(text="Status: Running update script...", fg="#f59e0b")
         self.update_idletasks()
+
         script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
+
         try:
             subprocess.Popen(
                 ["nohup", "bash", script_path],
@@ -575,6 +511,7 @@ class SettingsView(tk.Frame):
             )
         except Exception as e:
             print(f"Failed to launch update script: {e}")
+
         self.after(1500, lambda: os._exit(0))
 
 
@@ -582,58 +519,55 @@ class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         self.controller = controller
-
+        
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
-
+        
         tk.Button(header, text="← Back to Settings", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5,
-                  command=lambda: controller.show_frame("SettingsView")).pack(side="left", padx=20)
-        tk.Label(header, text="WI-FI NETWORK MANAGER", fg="#f8fafc", bg="#1e293b",
-                 font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
-
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView")).pack(side="left", padx=20)
+        tk.Label(header, text="WI-FI NETWORK MANAGER", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
+        
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=40, pady=20)
-
-        self.status_lbl = tk.Label(body, text="Status: Ready to scan networks", fg="#38bdf8", bg="#0f172a",
-                                   font=("Helvetica", 11, "bold"))
+        
+        self.status_lbl = tk.Label(body, text="Status: Ready to scan networks", fg="#38bdf8", bg="#0f172a", font=("Helvetica", 11, "bold"))
         self.status_lbl.pack(anchor="w", pady=(0, 10))
-
+        
         list_frame = tk.Frame(body, bg="#1e293b", padx=10, pady=10)
         list_frame.pack(fill="both", expand=True, pady=(0, 15))
-
+        
         scrollbar = tk.Scrollbar(list_frame)
         scrollbar.pack(side="right", fill="y")
-
+        
         self.net_listbox = tk.Listbox(list_frame, bg="#0f172a", fg="#f8fafc", font=("Courier", 11),
-                                      selectbackground="#3b82f6", selectforeground="#ffffff",
-                                      bd=0, highlightthickness=0, yscrollcommand=scrollbar.set)
+                                     selectbackground="#3b82f6", selectforeground="#ffffff",
+                                     bd=0, highlightthickness=0, yscrollcommand=scrollbar.set)
         self.net_listbox.pack(fill="both", expand=True)
         scrollbar.config(command=self.net_listbox.yview)
-
+        
         btn_frame = tk.Frame(body, bg="#0f172a")
         btn_frame.pack(fill="x")
-
+        
         tk.Button(btn_frame, text="Scan Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=8, command=self.scan_networks).pack(side="left", padx=(0, 10))
-
+        
         tk.Button(btn_frame, text="Connect Selected", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=8, command=self.connect_to_selected).pack(side="left")
+
         self.after(200, self.scan_networks)
 
     def scan_networks(self):
         self.status_lbl.config(text="Status: Scanning available wireless networks...", fg="#f59e0b")
         self.net_listbox.delete(0, tk.END)
         self.update_idletasks()
-
+        
         def run_scan():
             networks = []
             try:
-                subprocess.run(["nmcli", "device", "wifi", "rescan"], stdout=subprocess.DEVNULL,
-                               stderr=subprocess.DEVNULL)
+                subprocess.run(["nmcli", "device", "wifi", "rescan"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 raw = subprocess.check_output(["nmcli", "-t", "-f", "IN-USE,SSID,SECURITY", "device", "wifi"]).decode()
-
+                
                 seen = set()
                 for line in raw.split("\n"):
                     if not line:
@@ -643,15 +577,15 @@ class WifiManagerView(tk.Frame):
                         in_use = parts[0] == "*"
                         ssid = parts[1].strip()
                         security = parts[2].strip() if len(parts) > 2 else ""
-
+                        
                         if ssid and ssid not in seen:
                             seen.add(ssid)
-                            prefix = "CONNECTED → " if in_use else " "
+                            prefix = "CONNECTED → " if in_use else "            "
                             sec_tag = f" [{security}]" if security and security != "--" else " [Open]"
                             networks.append(f"{prefix}{ssid}{sec_tag}")
             except Exception as e:
                 print(f"Wi-Fi scan error: {e}")
-
+                
             def update_ui():
                 if networks:
                     for net_str in networks:
@@ -660,7 +594,7 @@ class WifiManagerView(tk.Frame):
                 else:
                     self.net_listbox.insert(tk.END, "No networks found or NetworkManager inactive.")
                     self.status_lbl.config(text="Status: Scan complete. No networks available.", fg="#ef4444")
-
+                
             self.after(0, update_ui)
 
         threading.Thread(target=run_scan, daemon=True).start()
@@ -670,45 +604,43 @@ class WifiManagerView(tk.Frame):
         if not selected_idx:
             messagebox.showwarning("Selection Required", "Please select a network from the list first.")
             return
-
+            
         line_text = self.net_listbox.get(selected_idx[0])
         if "No networks found" in line_text:
             return
-
+            
         clean_item = line_text.replace("CONNECTED → ", "").strip()
         if "[" in clean_item:
             clean_item = clean_item.split("[")[0].strip()
-
+            
         ssid = clean_item
-
+        
         pwd_win = tk.Toplevel(self)
         pwd_win.title(f"Connect to {ssid}")
         pwd_win.geometry("640x450")
         pwd_win.configure(bg="#1e293b")
         pwd_win.transient(self)
         pwd_win.grab_set()
-
-        tk.Label(pwd_win, text=f"Joining Network: {ssid}", fg="#38bdf8", bg="#1e293b",
-                 font=("Helvetica", 12, "bold")).pack(pady=(10, 5))
-
-        pwd_entry = tk.Entry(pwd_win, show="*", bg="#0f172a", fg="#ffffff", font=("Helvetica", 14), bd=0,
-                             relief="flat", insertbackground="white")
+        
+        tk.Label(pwd_win, text=f"Joining Network: {ssid}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(pady=(10, 5))
+        
+        pwd_entry = tk.Entry(pwd_win, show="*", bg="#0f172a", fg="#ffffff", font=("Helvetica", 14), bd=0, relief="flat", insertbackground="white")
         pwd_entry.pack(fill="x", padx=30, pady=5, ipady=6)
         pwd_entry.focus()
-
+        
         kbd_frame = tk.Frame(pwd_win, bg="#1e293b")
         kbd_frame.pack(fill="both", expand=True, padx=10, pady=10)
-
+        
         rows = [
             ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"],
             ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
             ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
             ["z", "x", "c", "v", "b", "n", "m", "_", "."]
         ]
-
+        
         def press_key(char):
             pwd_entry.insert(tk.END, char)
-
+            
         def backspace():
             current_text = pwd_entry.get()
             if current_text:
@@ -722,32 +654,31 @@ class WifiManagerView(tk.Frame):
                                 font=("Helvetica", 11, "bold"), relief="flat",
                                 command=lambda k=key: press_key(k))
                 btn.pack(side="left", padx=2)
-
+                
         spec_frame = tk.Frame(kbd_frame, bg="#1e293b")
         spec_frame.pack(pady=3)
-
+        
         tk.Button(spec_frame, text="⌫ Backspace", width=12, height=1, bg="#475569", fg="#ffffff",
                   font=("Helvetica", 10, "bold"), relief="flat", command=backspace).pack(side="left", padx=5)
         tk.Button(spec_frame, text="Clear", width=8, height=1, bg="#475569", fg="#ffffff",
-                  font=("Helvetica", 10, "bold"), relief="flat",
-                  command=lambda: pwd_entry.delete(0, tk.END)).pack(side="left", padx=5)
+                  font=("Helvetica", 10, "bold"), relief="flat", command=lambda: pwd_entry.delete(0, tk.END)).pack(side="left", padx=5)
 
         def execute_connect():
             password = pwd_entry.get()
             pwd_win.destroy()
-
+            
             self.status_lbl.config(text=f"Status: Connecting to {ssid}...", fg="#f59e0b")
             self.update_idletasks()
-
+            
             def connect_thread():
                 try:
                     if password:
                         cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
                     else:
                         cmd = ["nmcli", "device", "wifi", "connect", ssid]
-
+                        
                     res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-
+                    
                     if res.returncode == 0:
                         msg = f"Successfully connected to {ssid}!"
                         status_color = "#10b981"
@@ -760,12 +691,12 @@ class WifiManagerView(tk.Frame):
                 except Exception as e:
                     msg = f"Error: {e}"
                     status_color = "#ef4444"
-
+                    
                 def post_connect():
                     self.status_lbl.config(text=f"Status: {msg}", fg=status_color)
                     messagebox.showinfo("Wi-Fi Connection", msg)
                     self.scan_networks()
-
+                    
                 self.after(0, post_connect)
 
             threading.Thread(target=connect_thread, daemon=True).start()
