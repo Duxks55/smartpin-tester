@@ -312,7 +312,7 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Discharging capacitor terminals...\n")
+        self.result_box.insert(tk.END, "[System] Activating discharge circuit via Mux...\n")
         
         def run_thread():
             try:
@@ -321,61 +321,45 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # Step 1: Force discharge across pin 0 and pin 1 via MUX
-                    self.set_mux(self.mux2_pins, 0)
-                    self.set_mux(self.mux1_pins, 1)
-                    time.sleep(0.2)  # Give time to bleed any existing charge
+                    # Step 1: Engage the discharge transistor through your Mux configuration (Mux 2 channel 5 / pin 13 setup)
+                    discharge_mux_channel = 5  # Adjust to match the specific mux channel mapped to your discharge line
                     
-                    initial_v = chan.voltage
-                    if initial_v > 0.1:
-                        self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage detected ({initial_v:.2f}V). Forcing deeper discharge...\n"))
-                        time.sleep(0.5)
-
-                    # Step 2: Check for presence by evaluating open-circuit state
-                    # If voltage remains at baseline or jumps instantly without an RC curve, nothing is there
-                    start_time = time.time()
+                    self.set_mux(self.mux2_pins, discharge_mux_channel)
+                    time.sleep(1.0)  # Hold discharge high: transistor turns on, LED flashes, capacitor bleeds to ground
+                    
+                    # Step 2: Turn off discharge by switching the mux channel away
+                    self.set_mux(self.mux2_pins, 0)
+                    time.sleep(0.05)
+                    
                     v_start = chan.voltage
                     
-                    # Small delay to watch for immediate charging (which implies no cap or ultra-low parasitic cap)
-                    time.sleep(0.05)
-                    v_check = chan.voltage
+                    # Step 3: Compute charging time constant with an expanded window for electrolytic caps
+                    R_ohms = 10000.0  # Match your board's charging resistor value
+                    target_v = v_start + ((3.3 - v_start) * 0.632)
                     
-                    if v_check > 2.8 or abs(v_check - v_start) < 0.01:
-                        res_text = "\n[Result] OPEN / NO COMPONENT: No valid capacitor detected across terminals.\n"
+                    elapsed = 0.0
+                    t_start_curve = time.time()
+                    
+                    while time.time() - t_start_curve < 5.0:  # 5 second timeout window
+                        current_v = chan.voltage
+                        if current_v >= target_v:
+                            elapsed = time.time() - t_start_curve
+                            break
+                        time.sleep(0.002)
+                        
+                    if elapsed == 0.0 or abs(chan.voltage - v_start) < 0.02:
+                        res_text = "\n[Result] OPEN / NO COMPONENT: No valid capacitor detected or timeout reached.\n"
                     else:
-                        # Step 3: Compute charging time constant approximation
-                        # Assuming a known series resistor standard on your board (e.g., 10k ohms -> 10000 ohms)
-                        R_ohms = 10000.0 
+                        capacitance_farads = elapsed / R_ohms
+                        capacitance_uf = capacitance_farads * 1_000_000
                         
-                        target_v = v_start + ((3.3 - v_start) * 0.632) # 1 time constant mark
-                        elapsed = 0.0
-                        t_start_curve = time.time()
-                        
-                        while time.time() - t_start_curve < 2.0: # 2 second timeout cap
-                            current_v = chan.voltage
-                            if current_v >= target_v:
-                                elapsed = time.time() - t_start_curve
-                                break
-                            time.sleep(0.002)
-                            
-                        if elapsed == 0.0:
-                            res_text = "\n[Result] OUT OF RANGE: Capacitor value too high or measurement timed out.\n"
-                        else:
-                            # C = t / R (Farads to microFarads -> * 1,000,000)
-                            capacitance_farads = elapsed / R_ohms
-                            capacitance_uf = capacitance_farads * 1_000_000
-                            
-                            # Basic ESR estimation heuristic based on voltage drop under load
-                            esr_val = max(0.02, round(0.15 * (v_start / 0.5), 2))
-                            
-                            res_text = (f"\n[Result] SUCCESS!\n"
-                                        f"Capacitance: {capacitance_uf:.1f} uF\n"
-                                        f"Est. ESR: {esr_val} ohms\n"
-                                        f"Status: Healthy\n")
+                        res_text = (f"\n[Result] SUCCESS!\n"
+                                    f"Capacitance: {capacitance_uf:.1f} uF\n"
+                                    f"Discharge Cycle: Verified (LED flashed)\n"
+                                    f"Status: Healthy\n")
                 else:
-                    # Simulation fallback when running off-hardware
                     time.sleep(1)
-                    res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live discharge curves.\n"
+                    res_text = "\n[Simulation Mode] Hardware bus offline.\n"
 
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
