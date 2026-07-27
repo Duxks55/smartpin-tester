@@ -366,9 +366,10 @@ class CapacitorAnalyzerView(tk.Frame):
                 return None
                
             # Establish closed loop across both multiplexers
+            self._log(f"[Debug] Setting MUX2 source channel {self.source_channel}, MUX1 ground channel {ground_pin}")
             self.set_mux(self.mux2_pins, self.source_channel)
             self.set_mux(self.mux1_pins, ground_pin)
-            time.sleep(0.02)
+            time.sleep(0.05)
            
             start_time = time.time()
             target_voltage = 1.5
@@ -377,13 +378,25 @@ class CapacitorAnalyzerView(tk.Frame):
             while measured_v < target_voltage:
                 measured_v = chan.voltage if HARDWARE_AVAILABLE else (target_voltage + 0.1)
                 if measured_v is None:
+                    self._log("[Debug Error] ADC returned None during charge loop.")
                     return None
-                if (time.time() - start_time) > 8.0:
+                
+                # Print live voltage ticks to see if it's climbing at all
+                elapsed_so_far = time.time() - start_time
+                if int(elapsed_so_far * 10) % 5 == 0:  # Log roughly every 0.5s
+                    self._log(f"[Charging...] V = {measured_v:.3f}V (t={elapsed_so_far:.2f}s)")
+
+                if elapsed_so_far > 8.0:
+                    self._log("[Debug Error] Charging timed out after 8 seconds (voltage stuck below 1.5V).")
                     return None
                     
-            return time.time() - start_time
+                time.sleep(0.05)
+                
+            final_elapsed = time.time() - start_time
+            self._log(f"[Debug] Reached target in {final_elapsed:.4f}s")
+            return final_elapsed
         except Exception as e:
-            self._log(f"[Debug Error] {e}")
+            self._log(f"[Debug Exception] {e}")
             return None
 
     def smart_classify(self, elapsed_time):
