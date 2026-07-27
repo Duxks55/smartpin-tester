@@ -189,7 +189,6 @@ class TransistorCheckerView(tk.Frame):
 
                     def get_voltage(anode_pin, cathode_pin):
                         try:
-                            # Safely engage GPIO 22 if MUX2 is pointed at Pin 1
                             if anode_pin == 1:
                                 GPIO.output(self.transistor_power_pin, GPIO.HIGH)
                             else:
@@ -200,7 +199,6 @@ class TransistorCheckerView(tk.Frame):
                             time.sleep(0.05)
                             v = chan.voltage
                             
-                            # Clean up state immediately after reading
                             GPIO.output(self.transistor_power_pin, GPIO.LOW)
                             return v
                         except OSError:
@@ -217,8 +215,8 @@ class TransistorCheckerView(tk.Frame):
                             v = get_voltage(p1, p2)
                             if v is not None:
                                 readings[(p1, p2)] = v
-                                # Require a distinct voltage drop threshold to confirm real connection path
-                                if v > 0.15:
+                                # Lowered threshold slightly to ensure real silicon forward drops aren't skipped
+                                if v > 0.08:
                                     any_connection = True
 
                     if not any_connection:
@@ -227,7 +225,6 @@ class TransistorCheckerView(tk.Frame):
                         shorted_count = sum(1 for v in readings.values() if v < 0.03)
                         total_readings = len(readings)
 
-                        # Relaxed short threshold slightly to prevent false failures
                         if total_readings > 0 and (shorted_count / total_readings) > 0.75:
                             res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
                         else:
@@ -240,7 +237,7 @@ class TransistorCheckerView(tk.Frame):
                                 pnp_match = True
                                 for source_pin in others:
                                     v = readings.get((source_pin, base), 0)
-                                    if not (0.10 < v < 1.0 or v > 2.0):
+                                    if not (0.08 < v < 1.0 or v > 2.0):
                                         pnp_match = False
                                         break
                                 if pnp_match:
@@ -261,13 +258,12 @@ class TransistorCheckerView(tk.Frame):
                                     valid_drops = 0
                                     for target in others:
                                         v = readings.get((base, target), 0)
-                                        # Strict semiconductor junction drop validation (prevent floating pin noise)
-                                        if 0.40 < v < 0.90:
+                                        # Adjusted window to accurately capture standard 2N3904 Vbe / Vbc forward drops
+                                        if 0.30 < v < 0.95:
                                             valid_drops += 1
-                                        elif not (0.10 < v < 1.0 or v > 2.0):
+                                        elif not (0.08 < v < 1.0 or v > 2.0):
                                             npn_match = False
                                             break
-                                    # Must show at least one genuine PN junction drop to qualify as a valid transistor
                                     if npn_match and valid_drops > 0:
                                         v_a = readings.get((base, others[0]), 0)
                                         v_b = readings.get((base, others[1]), 0)
