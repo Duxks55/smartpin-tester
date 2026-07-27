@@ -311,36 +311,76 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Measuring capacitance...\n")
+        self.result_box.insert(tk.END, "[System] Running capacitor analysis cycle...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
                     i2c = busio.I2C(board.SCL, board.SDA)
                     ads = ADS.ADS1115(i2c)
-                    chan = AnalogIn(ads, 0)
+                    self.adc_channel = AnalogIn(ads, 0)
                     
-                    # Simple charge curve measurement using 10k resistor constant
-                    R_ohms = 10000.0
-                    v_start = chan.voltage
-                    target_v = v_start + ((3.3 - v_start) * 0.632)
+                    R_OHMS = 10000.0
+                    V_SUPPLY = 3.3
+                    TAU_FRACTION = 0.632
+                    DISCHARGE_TIME = 0.15
+                    TIMEOUT_S = 2.0
+                    SAMPLE_INTERVAL = 0.001
                     
-                    elapsed = 0.0
-                    t_start_curve = time.time()
+                    # 1. Force a complete discharge (LED flashes via Mux 2 channel 0)
+                    self.set_mux(self.mux2_pins, 0)
+                    time.sleep(DISCHARGE_TIME)
+                    self.set_mux(self.mux2_pins, 7)
+                    time.sleep(0.02)
                     
-                    while time.time() - t_start_curve < 2.0:
-                        current_v = chan.voltage
-                        if current_v >= target_v:
-                            elapsed = time.time() - t_start_curve
-                            break
-                        time.sleep(0.002)
-                        
-                    if elapsed == 0.0:
-                        res_text = "\n[Result] OPEN / NO COMPONENT: Timeout reached.\n"
+                    # 2. Capture residual / starting voltage
+                    try:
+                        v_start = self.adc_channel.voltage
+                    except Exception as e:
+                        self.after(0, lambda: self.result_box.insert(tk.END, f"\n[Hardware Error] ADC read failed at start: {e}\n"))
+                        return
+
+                    if v_start > V_SUPPLY * 0.95:
+                        res_text = "\n[Result] OPEN / NO COMPONENT: Voltage already high.\n"
                     else:
-                        capacitance_farads = elapsed / R_ohms
-                        capacitance_uf = capacitance_farads * 1_000_000
-                        res_text = f"\n[Result] Capacitance: {capacitance_uf:.1f} uF\nStatus: Healthy\n"
+                        v_target = v_start + (V_SUPPLY - v_start) * TAU_FRACTION
+                        
+                        # 3. Measure the rising edge
+                        t0 = time.perf_counter()
+                        timeout = t0 + TIMEOUT_S
+                        v_now = v_start
+                        
+                        timed_out = False
+                        while True:
+                            try:
+                                v_now = self.adc_channel.voltage
+                            except Exception:
+                                pass
+                                
+                            if v_now >= v_target:
+                                break
+                                
+                            if time.perf_counter() > timeout:
+                                timed_out = True
+                                break
+                                
+                            time.sleep(SAMPLE_INTERVAL)
+                            
+                        if timed_out:
+                            res_text = f"\n[Result] TIMEOUT: Capacitor did not reach {v_target:.3f}V (last: {v_now:.3f}V).\n"
+                        else:
+                            elapsed = time.perf_counter() - t0
+                            capacitance_f = elapsed / R_OHMS
+                            capacitance_uf = capacitance_f * 1_000_000.0
+                            
+                            if capacitance_uf < 0.01 or capacitance_uf > 50_000:
+                                res_text = f"\n[Result] IMPLAUSIBLE RESULT: {capacitance_uf:.2f} uF (check connections).\n"
+                            else:
+                                res_text = (f"\n[Result] SUCCESS!\n"
+                                            f"Capacitance: {capacitance_uf:.1f} uF\n"
+                                            f"Tau: {elapsed*1000:.1f} ms\n"
+                                            f"Vstart: {v_start:.3f} V\n"
+                                            f"Status: Healthy\n")
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline.\n"
