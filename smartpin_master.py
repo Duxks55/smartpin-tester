@@ -64,7 +64,7 @@ class MainDashboard(tk.Frame):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.9)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
         
         settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
@@ -389,11 +389,9 @@ class WifiManagerView(tk.Frame):
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=40, pady=20)
         
-        # Info & Status bar
         self.status_lbl = tk.Label(body, text="Status: Ready to scan networks", fg="#38bdf8", bg="#0f172a", font=("Helvetica", 11, "bold"))
         self.status_lbl.pack(anchor="w", pady=(0, 10))
         
-        # Network Listbox Frame
         list_frame = tk.Frame(body, bg="#1e293b", padx=10, pady=10)
         list_frame.pack(fill="both", expand=True, pady=(0, 15))
         
@@ -406,7 +404,6 @@ class WifiManagerView(tk.Frame):
         self.net_listbox.pack(fill="both", expand=True)
         scrollbar.config(command=self.net_listbox.yview)
         
-        # Action Buttons Frame
         btn_frame = tk.Frame(body, bg="#0f172a")
         btn_frame.pack(fill="x")
         
@@ -416,7 +413,6 @@ class WifiManagerView(tk.Frame):
         tk.Button(btn_frame, text="Connect Selected", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=8, command=self.connect_to_selected).pack(side="left")
 
-        # Auto-scan on entry
         self.after(200, self.scan_networks)
 
     def scan_networks(self):
@@ -427,7 +423,6 @@ class WifiManagerView(tk.Frame):
         def run_scan():
             networks = []
             try:
-                # Trigger a rescan if possible, then grab SSIDs and signal strength
                 subprocess.run(["nmcli", "device", "wifi", "rescan"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 raw = subprocess.check_output(["nmcli", "-t", "-f", "IN-USE,SSID,SECURITY", "device", "wifi"]).decode()
                 
@@ -445,15 +440,14 @@ class WifiManagerView(tk.Frame):
                             seen.add(ssid)
                             prefix = "CONNECTED → " if in_use else "            "
                             sec_tag = f" [{security}]" if security and security != "--" else " [Open]"
-                            networks.append((f"{prefix}{ssid}{sec_tag}", ssid))
+                            networks.append(f"{prefix}{ssid}{sec_tag}")
             except Exception as e:
                 print(f"Wi-Fi scan error: {e}")
                 
             def update_ui():
                 if networks:
-                    for display_str, ssid in networks:
-                        self.net_listbox.insert(tk.END, display_str)
-                        # Store actual SSID reference in listbox tuple mapping if needed
+                    for net_str in networks:
+                        self.net_listbox.insert(tk.END, net_str)
                     self.status_lbl.config(text=f"Status: Found {len(networks)} networks.", fg="#10b981")
                 else:
                     self.net_listbox.insert(tk.END, "No networks found or NetworkManager inactive.")
@@ -473,29 +467,63 @@ class WifiManagerView(tk.Frame):
         if "No networks found" in line_text:
             return
             
-        # Parse out clean SSID from the list item string format
         clean_item = line_text.replace("CONNECTED → ", "").strip()
-        # Strip security bracket tags like [WPA2] or [Open]
         if "[" in clean_item:
             clean_item = clean_item.split("[")[0].strip()
             
         ssid = clean_item
         
-        # Create a touch-friendly password prompt window
+        # Touch-friendly password window with On-Screen Keyboard
         pwd_win = tk.Toplevel(self)
         pwd_win.title(f"Connect to {ssid}")
-        pwd_win.geometry("400x230")
+        pwd_win.geometry("640x450")
         pwd_win.configure(bg="#1e293b")
         pwd_win.transient(self)
         pwd_win.grab_set()
         
-        tk.Label(pwd_win, text=f"Joining Network: {ssid}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(pady=(20, 10))
-        tk.Label(pwd_win, text="Enter Wi-Fi Password (leave blank if open):", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", padx=30)
+        tk.Label(pwd_win, text=f"Joining Network: {ssid}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(pady=(10, 5))
         
-        pwd_entry = tk.Entry(pwd_win, show="*", bg="#0f172a", fg="#ffffff", font=("Helvetica", 12), bd=0, relief="flat", insertbackground="white")
-        pwd_entry.pack(fill="x", padx=30, pady=10, ipady=5)
+        pwd_entry = tk.Entry(pwd_win, show="*", bg="#0f172a", fg="#ffffff", font=("Helvetica", 14), bd=0, relief="flat", insertbackground="white")
+        pwd_entry.pack(fill="x", padx=30, pady=5, ipady=6)
         pwd_entry.focus()
         
+        # On-Screen Keyboard Frame
+        kbd_frame = tk.Frame(pwd_win, bg="#1e293b")
+        kbd_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        
+        rows = [
+            ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-"],
+            ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"],
+            ["a", "s", "d", "f", "g", "h", "j", "k", "l"],
+            ["z", "x", "c", "v", "b", "n", "m", "_", "."]
+        ]
+        
+        def press_key(char):
+            pwd_entry.insert(tk.END, char)
+            
+        def backspace():
+            current_text = pwd_entry.get()
+            if current_text:
+                pwd_entry.delete(len(current_text) - 1, tk.END)
+
+        for r_idx, row in enumerate(rows):
+            r_frame = tk.Frame(kbd_frame, bg="#1e293b")
+            r_frame.pack(pady=3)
+            for key in row:
+                btn = tk.Button(r_frame, text=key, width=4, height=1, bg="#334155", fg="#ffffff",
+                                font=("Helvetica", 11, "bold"), relief="flat",
+                                command=lambda k=key: press_key(k))
+                btn.pack(side="left", padx=2)
+                
+        # Special action buttons row (Backspace & Clear)
+        spec_frame = tk.Frame(kbd_frame, bg="#1e293b")
+        spec_frame.pack(pady=3)
+        
+        tk.Button(spec_frame, text="⌫ Backspace", width=12, height=1, bg="#475569", fg="#ffffff",
+                  font=("Helvetica", 10, "bold"), relief="flat", command=backspace).pack(side="left", padx=5)
+        tk.Button(spec_frame, text="Clear", width=8, height=1, bg="#475569", fg="#ffffff",
+                  font=("Helvetica", 10, "bold"), relief="flat", command=lambda: pwd_entry.delete(0, tk.END)).pack(side="left", padx=5)
+
         def execute_connect():
             password = pwd_entry.get()
             pwd_win.destroy()
@@ -534,8 +562,8 @@ class WifiManagerView(tk.Frame):
 
             threading.Thread(target=connect_thread, daemon=True).start()
 
-        tk.Button(pwd_win, text="Connect", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=20, pady=8, command=execute_connect).pack(pady=15)
+        tk.Button(pwd_win, text="Connect to Network", bg="#2563eb", fg="#ffffff", font=("Helvetica", 11, "bold"),
+                  relief="flat", width=25, pady=6, command=execute_connect).pack(pady=10)
 
 
 if __name__ == "__main__":
