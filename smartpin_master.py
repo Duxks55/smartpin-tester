@@ -393,7 +393,8 @@ class SettingsView(tk.Frame):
             update_available = False
             remote_version = "Unknown"
             try:
-                url = "https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt"
+                # Append a timestamp query parameter to bypass GitHub edge caching
+                url = f"https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt?t={int(time.time())}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
                     remote_version = response.read().decode('utf-8').strip()
