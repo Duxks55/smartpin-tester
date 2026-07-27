@@ -155,19 +155,14 @@ class TransistorCheckerView(tk.Frame):
                              font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_transistor_test)
         test_btn.pack(anchor="w")
-        
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
-        self.transistor_power_pin = 22  # GPIO 22 controlling 2N3904 base for MUX2 Pin 1 
-
         if HARDWARE_AVAILABLE:
             try:
                 GPIO.setmode(GPIO.BCM)
                 GPIO.setwarnings(False)
                 for p in self.mux1_pins + self.mux2_pins:
                     GPIO.setup(p, GPIO.OUT)
-                GPIO.setup(self.transistor_power_pin, GPIO.OUT)
-                GPIO.output(self.transistor_power_pin, GPIO.LOW)
             except Exception as e:
                 print(f"GPIO Setup Warning: {e}")
 
@@ -189,21 +184,11 @@ class TransistorCheckerView(tk.Frame):
 
                     def get_voltage(anode_pin, cathode_pin):
                         try:
-                            if anode_pin == 1:
-                                GPIO.output(self.transistor_power_pin, GPIO.HIGH)
-                            else:
-                                GPIO.output(self.transistor_power_pin, GPIO.LOW)
-
                             self.set_mux(self.mux2_pins, anode_pin)
                             self.set_mux(self.mux1_pins, cathode_pin)
-                            time.sleep(0.05)
-                            v = chan.voltage
-                            
-                            GPIO.output(self.transistor_power_pin, GPIO.LOW)
-                            return v
+                            time.sleep(0.03)
+                            return chan.voltage
                         except OSError:
-                            if HARDWARE_AVAILABLE:
-                                GPIO.output(self.transistor_power_pin, GPIO.LOW)
                             return None
 
                     readings = {}
@@ -215,63 +200,59 @@ class TransistorCheckerView(tk.Frame):
                             v = get_voltage(p1, p2)
                             if v is not None:
                                 readings[(p1, p2)] = v
-                                if v > 0.08:
+                                if v > 0.05:
                                     any_connection = True
-
                     if not any_connection:
                         res_text = "\n[Result] EMPTY: No component detected.\n"
                     else:
-                        shorted_count = sum(1 for v in readings.values() if v < 0.03)
+                        shorted_count = sum(1 for v in readings.values() if v < 0.05)
                         total_readings = len(readings)
 
-                        if total_readings > 0 and (shorted_count / total_readings) > 0.75:
+                        if total_readings > 0 and (shorted_count / total_readings) > 0.6:
                             res_text = "\n[Result] DEAD / SHORTED: Component failure detected.\n"
                         else:
                             found_type = None
                             match_pin_b, match_pin_c, match_pin_e = None, None, None
 
-                            # --- CHECK FOR PNP FIRST ---
                             for base in [0, 1, 2]:
                                 others = [p for p in [0, 1, 2] if p != base]
-                                pnp_match = True
-                                for source_pin in others:
-                                    v = readings.get((source_pin, base), 0)
-                                    if not (0.08 < v < 1.0 or v > 2.0):
-                                        pnp_match = False
+                                npn_match = True
+                                for target in others:
+                                    v = readings.get((base, target), 0)
+                                    if not (0.15 < v < 0.9 or v > 2.5):
+                                        npn_match = False
                                         break
-                                if pnp_match:
-                                    v_a = readings.get((others[0], base), 0)
-                                    v_b = readings.get((others[1], base), 0)
+                                if npn_match:
+                                    ce_forward = readings.get((others[0], others[1]), 0)
+                                    ce_reverse = readings.get((others[1], others[0]), 0)
+                                    if ce_reverse > ce_forward and ce_reverse > 1.5:
+                                        continue
+                                    v_a = readings.get((base, others[0]), 0)
+                                    v_b = readings.get((base, others[1]), 0)
                                     if v_a > v_b:
                                         collector, emitter = others[1], others[0]
                                     else:
                                         collector, emitter = others[0], others[1]
-                                    found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
+                                    found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                                     break
-
-                            # --- CHECK FOR NPN ---
                             if not found_type:
                                 for base in [0, 1, 2]:
                                     others = [p for p in [0, 1, 2] if p != base]
-                                    npn_match = True
-                                    valid_drops = 0
-                                    for target in others:
-                                        v = readings.get((base, target), 0)
-                                        if 0.30 < v < 0.95:
-                                            valid_drops += 1
-                                        elif not (0.08 < v < 1.0 or v > 2.0):
-                                            npn_match = False
+                                    pnp_match = True
+                                    for source_pin in others:
+                                        v = readings.get((source_pin, base), 0)
+                                        if not (0.15 < v < 0.9 or v > 2.5):
+                                            pnp_match = False
                                             break
-                                    if npn_match and valid_drops > 0:
-                                        v_a = readings.get((base, others[0]), 0)
-                                        v_b = readings.get((base, others[1]), 0)
+                                    if pnp_match:
+                                        v_a = readings.get((others[0], base), 0)
+                                        v_b = readings.get((others[1], base), 0)
                                         if v_a > v_b:
-                                            collector, emitter = others[0], others[1]
-                                        else:
                                             collector, emitter = others[1], others[0]
-                                        found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
+                                        else:
+                                            collector, emitter = others[0], others[1]
+                                        found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
                                         break
-
                             if found_type:
                                 hfe_val = 150
                                 try:
@@ -291,7 +272,7 @@ class TransistorCheckerView(tk.Frame):
                                             f"Pinout -> Base: Pin {match_pin_b}, Collector: Pin {match_pin_c}, Emitter: Pin {match_pin_e}\n"
                                             f"Estimated hFE (Gain): {hfe_val}\n")
                             else:
-                                res_text = "\n[Result] EMPTY / UNKNOWN: No valid BJT semiconductor junction signatures found.\n"
+                                res_text = "\n[Result] UNKNOWN / DEAD: Component detected but did not match standard BJT signatures.\n"
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline. NPN Transistor verified (Base: 1, Collector: 2, Emitter: 3, hFE: 185).\n"
@@ -348,6 +329,7 @@ class CapacitorAnalyzerView(tk.Frame):
                 GPIO.setup(self.discharge_pin, GPIO.OUT)
                 GPIO.output(self.discharge_pin, GPIO.LOW)
                 
+                # Setup 2N3904 shunt transistor control pin
                 GPIO.setup(self.shunt_transistor_pin, GPIO.OUT)
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
             except Exception as e:
@@ -362,11 +344,14 @@ class CapacitorAnalyzerView(tk.Frame):
         GPIO.output(pins[2], (channel >> 2) & 1)
 
     def _log(self, msg):
+        """Thread-safe log to both the Text widget and the console."""
         print(msg)
         self.after(0, lambda: self.result_box.insert(tk.END, msg + "\n"))
 
     def full_drain(self, discharge_pin_mux1):
+        """Uses the robust drain routine to clear the capacitor completely before testing."""
         try:
+            # Ensure shunt transistor is OFF during full drain unless needed, or handle appropriately
             if HARDWARE_AVAILABLE:
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
             self.set_mux(self.mux2_pins, self.discharge_channel)
@@ -388,9 +373,12 @@ class CapacitorAnalyzerView(tk.Frame):
             if v_check is None or v_check > 0.15:
                 return None
                
+            # Ensure the 2N3904 shunt transistor on GPIO 20 is OFF so it stops pulling Pin 3 to ground
             if HARDWARE_AVAILABLE:
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
 
+            # Establish closed loop across both multiplexers
+            self._log(f"[Debug] Setting MUX2 source channel {self.source_channel}, MUX1 ground channel {ground_pin}")
             self.set_mux(self.mux2_pins, self.source_channel)
             self.set_mux(self.mux1_pins, ground_pin)
             time.sleep(0.05)
@@ -402,21 +390,31 @@ class CapacitorAnalyzerView(tk.Frame):
             while measured_v < target_voltage:
                 measured_v = chan.voltage if HARDWARE_AVAILABLE else (target_voltage + 0.1)
                 if measured_v is None:
+                    self._log("[Debug Error] ADC returned None during charge loop.")
                     return None
                 
+                # Print live voltage ticks to see if it's climbing at all
                 elapsed_so_far = time.time() - start_time
+                if int(elapsed_so_far * 10) % 5 == 0:  # Log roughly every 0.5s
+                    self._log(f"[Charging...] V = {measured_v:.3f}V (t={elapsed_so_far:.2f}s)")
+
                 if elapsed_so_far > 8.0:
+                    self._log("[Debug Error] Charging timed out after 8 seconds (voltage stuck below 1.5V).")
                     return None
                     
                 time.sleep(0.05)
                 
-            return time.time() - start_time
-        except Exception:
+            final_elapsed = time.time() - start_time
+            self._log(f"[Debug] Reached target in {final_elapsed:.4f}s")
+            return final_elapsed
+        except Exception as e:
+            self._log(f"[Debug Exception] {e}")
             return None
 
     def smart_classify(self, elapsed_time):
         if elapsed_time is None:
             return None
+        self._log(f"[Debug] Time to 1.5V: {elapsed_time:.4f}s")
         if elapsed_time < 0.08:
             return 100.0
         else:
@@ -438,17 +436,25 @@ class CapacitorAnalyzerView(tk.Frame):
                 chan = AnalogIn(ads, 0)
 
                 scan_p1, scan_p2 = 0, 1
+                self._log(f"Scanning across Pins {scan_p1} and {scan_p2}...")
+                
                 self.set_mux(self.mux2_pins, scan_p1)
                 self.set_mux(self.mux1_pins, scan_p2)
                 time.sleep(0.1)
                
                 v = chan.voltage
                 if v is not None and v > 0.15:
+                    self._log(f"\n[+] Capacitor detected! (Initial voltage: {v:.2f}V)")
+                   
+                    self._log("Testing polarity direction 1 (Measure Pin 0, Ground Pin 1)...")
                     elapsed = self.try_measurement(measure_pin=scan_p1, ground_pin=scan_p2, chan=chan)
+                   
                     if elapsed is None or elapsed < 0.015:
+                        self._log("Direction 1 failed. Trying direction 2 (Measure Pin 1, Ground Pin 0)...")
                         elapsed = self.try_measurement(measure_pin=scan_p2, ground_pin=scan_p1, chan=chan)
                    
                     cap_val = self.smart_classify(elapsed)
+               
                     if cap_val is not None:
                         self._log(f"=== RESULT: Measured Capacitance = ~{cap_val:.0f} µF ===")
                     else:
@@ -457,6 +463,7 @@ class CapacitorAnalyzerView(tk.Frame):
                     self._log("[System] No capacitor detected or voltage too low.")
             except Exception as e:
                 self._log(f"\n[Hardware Error] {e}")
+                self._log(traceback.format_exc())
 
         threading.Thread(target=run_thread, daemon=True).start()
 
@@ -496,6 +503,8 @@ class SettingsView(tk.Frame):
         self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}",
                                     fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.version_lbl.pack(anchor="w", pady=(5, 2))
+        tk.Label(update_card, text="Pulls updates automatically from your GitHub repository.", fg="#94a3b8",
+                 bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
 
         self.update_status_lbl = tk.Label(update_card, text="Status: Checking for updates...", fg="#f59e0b",
                                           bg="#1e293b", font=("Helvetica", 10, "bold"))
@@ -505,13 +514,26 @@ class SettingsView(tk.Frame):
         btn_action_frame.pack(anchor="w")
 
         tk.Button(btn_action_frame, text="Check for Updates Now", bg="#2563eb", fg="#ffffff",
-                  font=("Helvetica", 10, "bold"), relief="flat", padx=15, pady=5,
+                  font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5,
                   command=lambda: self.check_github_updates(manual=True)).pack(side="left", padx=(0, 10))
 
         self.update_now_btn = tk.Button(btn_action_frame, text="Update Now", bg="#10b981", fg="#ffffff",
-                                        font=("Helvetica", 10, "bold"), relief="flat", padx=15, pady=5,
-                                        command=self.perform_ota_update)
+                                        font=("Helvetica", 10, "bold"),
+                                        relief="flat", padx=15, pady=5, command=self.perform_ota_update)
         self.update_now_btn.pack_forget()
+
+        wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
+        wifi_card.pack(fill="x", pady=10)
+
+        tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b",
+                 font=("Helvetica", 12, "bold")).pack(anchor="w")
+        tk.Label(wifi_card, text="Configure Wi-Fi connections and select wireless networks.", fg="#94a3b8",
+                 bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
+
+        tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5,
+                  command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
 
     def on_show(self):
         self.check_github_updates(manual=False)
@@ -529,6 +551,7 @@ class SettingsView(tk.Frame):
         except Exception:
             pass
         self.current_version = local_version
+        self.version_lbl.config(text=f"Current Running Version: {self.current_version}")
 
         def query_github():
             update_available = False
@@ -538,6 +561,7 @@ class SettingsView(tk.Frame):
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
                     remote_version = response.read().decode('utf-8').strip()
+
                 if remote_version and remote_version != self.current_version:
                     update_available = True
             except Exception as e:
@@ -547,8 +571,11 @@ class SettingsView(tk.Frame):
                 if update_available:
                     self.update_status_lbl.config(text=f"Status: Update Available! ({remote_version})", fg="#10b981")
                     self.update_now_btn.pack(side="left")
-                    if manual and messagebox.askyesno("Update Available", f"A new version ({remote_version}) is available!\n\nInstall now?"):
-                        self.perform_ota_update()
+
+                    if manual:
+                        if messagebox.askyesno("Update Available",
+                                               f"A new version ({remote_version}) is available on GitHub!\n\nWould you like to install it now?"):
+                            self.perform_ota_update()
                 else:
                     if manual:
                         messagebox.showinfo("Up to Date", f"You are running the latest version ({self.current_version}).")
@@ -564,7 +591,13 @@ class SettingsView(tk.Frame):
         self.update_idletasks()
         script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
         try:
-            subprocess.Popen(["nohup", "bash", script_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
+            subprocess.Popen(
+                ["nohup", "bash", script_path],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True
+            )
         except Exception as e:
             print(f"Failed to launch update script: {e}")
         self.after(1500, lambda: os._exit(0))
@@ -609,6 +642,7 @@ class WifiManagerView(tk.Frame):
 
         tk.Button(btn_frame, text="Scan Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=8, command=self.scan_networks).pack(side="left", padx=(0, 10))
+
         tk.Button(btn_frame, text="Connect Selected", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=8, command=self.connect_to_selected).pack(side="left")
         self.after(200, self.scan_networks)
@@ -621,8 +655,10 @@ class WifiManagerView(tk.Frame):
         def run_scan():
             networks = []
             try:
-                subprocess.run(["nmcli", "device", "wifi", "rescan"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                subprocess.run(["nmcli", "device", "wifi", "rescan"], stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL)
                 raw = subprocess.check_output(["nmcli", "-t", "-f", "IN-USE,SSID,SECURITY", "device", "wifi"]).decode()
+
                 seen = set()
                 for line in raw.split("\n"):
                     if not line:
@@ -632,6 +668,7 @@ class WifiManagerView(tk.Frame):
                         in_use = parts[0] == "*"
                         ssid = parts[1].strip()
                         security = parts[2].strip() if len(parts) > 2 else ""
+
                         if ssid and ssid not in seen:
                             seen.add(ssid)
                             prefix = "CONNECTED → " if in_use else " "
@@ -666,6 +703,7 @@ class WifiManagerView(tk.Frame):
         clean_item = line_text.replace("CONNECTED → ", "").strip()
         if "[" in clean_item:
             clean_item = clean_item.split("[")[0].strip()
+
         ssid = clean_item
 
         pwd_win = tk.Toplevel(self)
@@ -701,16 +739,18 @@ class WifiManagerView(tk.Frame):
             if current_text:
                 pwd_entry.delete(len(current_text) - 1, tk.END)
 
-        for row in rows:
+        for r_idx, row in enumerate(rows):
             r_frame = tk.Frame(kbd_frame, bg="#1e293b")
             r_frame.pack(pady=3)
             for key in row:
-                tk.Button(r_frame, text=key, width=4, height=1, bg="#334155", fg="#ffffff",
-                          font=("Helvetica", 11, "bold"), relief="flat",
-                          command=lambda k=key: press_key(k)).pack(side="left", padx=2)
+                btn = tk.Button(r_frame, text=key, width=4, height=1, bg="#334155", fg="#ffffff",
+                                font=("Helvetica", 11, "bold"), relief="flat",
+                                command=lambda k=key: press_key(k))
+                btn.pack(side="left", padx=2)
 
         spec_frame = tk.Frame(kbd_frame, bg="#1e293b")
         spec_frame.pack(pady=3)
+
         tk.Button(spec_frame, text="⌫ Backspace", width=12, height=1, bg="#475569", fg="#ffffff",
                   font=("Helvetica", 10, "bold"), relief="flat", command=backspace).pack(side="left", padx=5)
         tk.Button(spec_frame, text="Clear", width=8, height=1, bg="#475569", fg="#ffffff",
@@ -720,19 +760,31 @@ class WifiManagerView(tk.Frame):
         def execute_connect():
             password = pwd_entry.get()
             pwd_win.destroy()
+
             self.status_lbl.config(text=f"Status: Connecting to {ssid}...", fg="#f59e0b")
             self.update_idletasks()
 
             def connect_thread():
                 try:
-                    cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password] if password else ["nmcli", "device", "wifi", "connect", ssid]
-                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
-                    if res.returncode == 0:
-                        msg, status_color = f"Successfully connected to {ssid}!", "#10b981"
+                    if password:
+                        cmd = ["nmcli", "device", "wifi", "connect", ssid, "password", password]
                     else:
-                        msg, status_color = f"Connection failed: {res.stderr.strip()}", "#ef4444"
+                        cmd = ["nmcli", "device", "wifi", "connect", ssid]
+
+                    res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+
+                    if res.returncode == 0:
+                        msg = f"Successfully connected to {ssid}!"
+                        status_color = "#10b981"
+                    else:
+                        msg = f"Connection failed: {res.stderr.strip()}"
+                        status_color = "#ef4444"
+                except subprocess.TimeoutExpired:
+                    msg = "Connection timed out."
+                    status_color = "#ef4444"
                 except Exception as e:
-                    msg, status_color = f"Error: {e}", "#ef4444"
+                    msg = f"Error: {e}"
+                    status_color = "#ef4444"
 
                 def post_connect():
                     self.status_lbl.config(text=f"Status: {msg}", fg=status_color)
@@ -750,3 +802,4 @@ class WifiManagerView(tk.Frame):
 if __name__ == "__main__":
     app = SmartPinMasterApp()
     app.mainloop()
+```[cite: 1]
