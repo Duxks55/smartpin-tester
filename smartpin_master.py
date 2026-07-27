@@ -292,7 +292,7 @@ class CapacitorAnalyzerView(tk.Frame):
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=30)
         
-        self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=12, bd=0, relief="flat")
+        self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=14, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
         self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready.\nConnect capacitor across test terminals and press 'Measure Capacitance'.\n")
         
@@ -303,93 +303,126 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
 
-    def set_mux(self, pins, channel):
         if HARDWARE_AVAILABLE:
-            GPIO.output(pins[0], (channel >> 0) & 1)
-            GPIO.output(pins[1], (channel >> 1) & 1)
-            GPIO.output(pins[2], (channel >> 2) & 1)
+            try:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setwarnings(False)
+                for p in self.mux1_pins + self.mux2_pins:
+                    GPIO.setup(p, GPIO.OUT)
+                    GPIO.output(p, 0)
+            except Exception as e:
+                print(f"GPIO Setup Warning (Capacitor): {e}")
+
+    def set_mux(self, pins, channel):
+        if not HARDWARE_AVAILABLE:
+            return
+        GPIO.output(pins[0], (channel >> 0) & 1)
+        GPIO.output(pins[1], (channel >> 1) & 1)
+        GPIO.output(pins[2], (channel >> 2) & 1)
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Running capacitor analysis cycle...\n")
+        self.result_box.insert(tk.END, "[System] Capacitor test started...\n")
+        self.update_idletasks()
         
         def run_thread():
             try:
-                if HARDWARE_AVAILABLE:
-                    i2c = busio.I2C(board.SCL, board.SDA)
-                    ads = ADS.ADS1115(i2c)
-                    self.adc_channel = AnalogIn(ads, 0)
-                    
-                    R_OHMS = 10000.0
-                    V_SUPPLY = 3.3
-                    TAU_FRACTION = 0.632
-                    DISCHARGE_TIME = 0.15
-                    TIMEOUT_S = 2.0
-                    SAMPLE_INTERVAL = 0.001
-                    
-                    # 1. Force a complete discharge (LED flashes via Mux 2 channel 0)
-                    self.set_mux(self.mux2_pins, 0)
-                    time.sleep(DISCHARGE_TIME)
-                    self.set_mux(self.mux2_pins, 7)
-                    time.sleep(0.02)
-                    
-                    # 2. Capture residual / starting voltage
+                if not HARDWARE_AVAILABLE:
+                    time.sleep(1.0)
+                    self.after(0, lambda: self.result_box.insert(tk.END, "\n[Simulation] Hardware offline – simulated 22.0 µF\n"))
+                    return
+
+                i2c = busio.I2C(board.SCL, board.SDA)
+                ads = ADS.ADS1115(i2c)
+                chan = AnalogIn(ads, ADS.P0)
+                
+                R_OHMS = 10000.0
+                V_SUPPLY = 3.3
+                TAU_FRAC = 0.632
+                DISCHARGE_S = 0.25
+                TIMEOUT_S = 3.0
+                SAMPLE_DT = 0.002
+                
+                # 1. DISCHARGE (Mux 2 channel 0 -> base of 2N3904)
+                self.after(0, lambda: self.result_box.insert(tk.END, "  → Discharging (LED should flash)...\n"))
+                self.set_mux(self.mux2_pins, 0)
+                time.sleep(DISCHARGE_S)
+                self.set_mux(self.mux2_pins, 7)  # All high = off state
+                time.sleep(0.03)
+                
+                # 2. Read residual voltage
+                v_start = chan.voltage
+                self.after(0, lambda: self.result_box.insert(tk.END, f"  → After discharge: {v_start:.3f} V\n"))
+
+                if v_start > V_SUPPLY * 0.90:
+                    self.after(0, lambda: self.result_box.insert(tk.END, "\n[Result] OPEN CIRCUIT – voltage already high.\nCheck that a capacitor is inserted.\n"))
+                    return
+
+                v_target = v_start + (V_SUPPLY - v_start) * TAU_FRAC
+                self.after(0, lambda: self.result_box.insert(tk.END, f"  → Target (63.2 %): {v_target:.3f} V\n  → Enabling charge path and measuring curve...\n"))
+
+                # 3. ENABLE CHARGING PATH (Using Mux channels 0 for charge source & return)
+                # If your hardware routes through a different pin, update the channel index below (e.g., 0, 1, or 2)
+                self.set_mux(self.mux2_pins, 0)  
+                self.set_mux(self.mux1_pins, 1)  
+                time.sleep(0.01)
+
+                # 4. Capture the rising edge
+                t0 = time.perf_counter()
+                deadline = t0 + TIMEOUT_S
+                elapsed = 0.0
+                v_now = v_start
+                last_print = 0.0
+
+                while True:
                     try:
-                        v_start = self.adc_channel.voltage
-                    except Exception as e:
-                        self.after(0, lambda: self.result_box.insert(tk.END, f"\n[Hardware Error] ADC read failed at start: {e}\n"))
+                        v_now = chan.voltage
+                    except Exception:
+                        pass
+
+                    now = time.perf_counter()
+                    if now - last_print > 0.20:
+                        self.after(0, lambda v=v_now: self.result_box.insert(tk.END, f"     {v:.3f} V\n"))
+                        last_print = now
+
+                    if v_now >= v_target:
+                        elapsed = now - t0
+                        break
+
+                    if now > deadline:
+                        self.after(0, lambda: self.result_box.insert(tk.END, 
+                            f"\n[Result] TIMEOUT\n"
+                            f"Did not reach {v_target:.3f} V within {TIMEOUT_S} s.\n"
+                            f"Last reading: {v_now:.3f} V\n"
+                            "Possible causes:\n"
+                            "  • No capacitor inserted\n"
+                            "  • Wrong mux channels for the charge path\n"
+                            "  • Series resistor not connected\n"
+                            "  • ADC not seeing the capacitor node\n"))
                         return
 
-                    if v_start > V_SUPPLY * 0.95:
-                        res_text = "\n[Result] OPEN / NO COMPONENT: Voltage already high.\n"
-                    else:
-                        v_target = v_start + (V_SUPPLY - v_start) * TAU_FRACTION
-                        
-                        # 3. Measure the rising edge
-                        t0 = time.perf_counter()
-                        timeout = t0 + TIMEOUT_S
-                        v_now = v_start
-                        
-                        timed_out = False
-                        while True:
-                            try:
-                                v_now = self.adc_channel.voltage
-                            except Exception:
-                                pass
-                                
-                            if v_now >= v_target:
-                                break
-                                
-                            if time.perf_counter() > timeout:
-                                timed_out = True
-                                break
-                                
-                            time.sleep(SAMPLE_INTERVAL)
-                            
-                        if timed_out:
-                            res_text = f"\n[Result] TIMEOUT: Capacitor did not reach {v_target:.3f}V (last: {v_now:.3f}V).\n"
-                        else:
-                            elapsed = time.perf_counter() - t0
-                            capacitance_f = elapsed / R_OHMS
-                            capacitance_uf = capacitance_f * 1_000_000.0
-                            
-                            if capacitance_uf < 0.01 or capacitance_uf > 50_000:
-                                res_text = f"\n[Result] IMPLAUSIBLE RESULT: {capacitance_uf:.2f} uF (check connections).\n"
-                            else:
-                                res_text = (f"\n[Result] SUCCESS!\n"
-                                            f"Capacitance: {capacitance_uf:.1f} uF\n"
-                                            f"Tau: {elapsed*1000:.1f} ms\n"
-                                            f"Vstart: {v_start:.3f} V\n"
-                                            f"Status: Healthy\n")
-                else:
-                    time.sleep(1)
-                    res_text = "\n[Simulation Mode] Hardware bus offline.\n"
+                    time.sleep(SAMPLE_DT)
 
-                self.after(0, lambda: self.result_box.insert(tk.END, res_text))
+                # 5. Calculate capacitance
+                C_farads = elapsed / R_OHMS
+                C_uF = C_farads * 1e6
+
+                if 0.05 < C_uF < 47000:
+                    msg = (f"\n[Result] SUCCESS\n"
+                           f"Capacitance : {C_uF:.2f} µF\n"
+                           f"Time constant: {elapsed*1000:.1f} ms\n"
+                           f"Vstart       : {v_start:.3f} V\n"
+                           f"Status       : Healthy\n")
+                else:
+                    msg = (f"\n[Result] IMPLAUSIBLE\n"
+                           f"Calculated {C_uF:.2f} µF (τ = {elapsed*1000:.1f} ms)\n"
+                           "Check wiring / resistor value.\n")
+
+                self.after(0, lambda: self.result_box.insert(tk.END, msg))
+
             except Exception as e:
-                err_msg = f"\n[Hardware Error] {e}\n"
-                self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
-                
+                self.after(0, lambda: self.result_box.insert(tk.END, f"\n[Hardware Error] {e}\n"))
+
         threading.Thread(target=run_thread, daemon=True).start()
 
 class SettingsView(tk.Frame):
