@@ -5,6 +5,8 @@ import threading
 import os
 import time
 import sys
+import urllib.request
+import json
 
 # Set up I2C permissions for non-root users if needed
 try:
@@ -54,6 +56,9 @@ class SmartPinMasterApp(tk.Tk):
     def show_frame(self, frame_name):
         frame = self.frames[frame_name]
         frame.tkraise()
+        # Trigger any view-specific refresh on show if available
+        if hasattr(frame, "on_show"):
+            frame.on_show()
 
 
 class MainDashboard(tk.Frame):
@@ -64,7 +69,7 @@ class MainDashboard(tk.Frame):
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
-        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
+        title_label = tk.Label(header, text="SMARTPIN HARDWARE TESTER (v1.0.9)", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 16, "bold"))
         title_label.pack(side="left", padx=20)
         
         settings_btn = tk.Button(header, text="⚙ Settings & Updates", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
@@ -309,6 +314,7 @@ class CapacitorAnalyzerView(tk.Frame):
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
+        self.controller = controller
         
         header = tk.Frame(self, bg="#1e293b", height=60)
         header.pack(fill="x", side="top")
@@ -326,23 +332,31 @@ class SettingsView(tk.Frame):
         
         tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
-        current_version = "v1.0.0"
+        self.current_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
             if os.path.exists(version_file_path):
                 with open(version_file_path, "r") as f:
-                    current_version = f.read().strip()
+                    self.current_version = f.read().strip()
         except Exception:
             pass
 
-        tk.Label(update_card, text=f"Current Running Version: {current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(5, 2))
-        tk.Label(update_card, text="Pull pre-compiled releases automatically from GitHub repository.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
+        tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(5, 2))
+        tk.Label(update_card, text="Pulls updates automatically from your GitHub repository.", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 9)).pack(anchor="w", pady=(2, 10))
         
-        self.update_status_lbl = tk.Label(update_card, text="Status: Up to date", fg="#10b981", bg="#1e293b", font=("Helvetica", 10))
+        self.update_status_lbl = tk.Label(update_card, text="Status: Checking for updates...", fg="#f59e0b", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 10))
         
-        tk.Button(update_card, text="Check for Updates Now", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5, command=self.perform_ota_update).pack(anchor="w")
+        btn_action_frame = tk.Frame(update_card, bg="#1e293b")
+        btn_action_frame.pack(anchor="w")
+        
+        tk.Button(btn_action_frame, text="Check for Updates Now", bg="#2563eb", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: self.check_github_updates(manual=True)).pack(side="left", padx=(0, 10))
+        
+        self.update_now_btn = tk.Button(btn_action_frame, text="Update Now", bg="#10b981", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                                        relief="flat", padx=15, pady=5, command=self.perform_ota_update)
+        # Hidden until an update is found
+        self.update_now_btn.pack_forget() 
         
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         wifi_card.pack(fill="x", pady=10)
@@ -352,6 +366,50 @@ class SettingsView(tk.Frame):
         
         tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
+
+    def on_show(self):
+        # Automatically check GitHub for updates every time settings view is entered
+        self.check_github_updates(manual=False)
+
+    def check_github_updates(self, manual=False):
+        if manual:
+            self.update_status_lbl.config(text="Status: Checking GitHub...", fg="#f59e0b")
+        self.update_idletasks()
+
+        def query_github():
+            update_available = False
+            remote_version = "Unknown"
+            try:
+                # Replace with your actual GitHub raw version file or release API URL
+                # Example checking a version.txt file in your repo branch main:
+                url = "https://raw.githubusercontent.com/YOUR_GITHUB_USERNAME/YOUR_REPO_NAME/main/version.txt"
+                req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    remote_version = response.read().decode('utf-8').strip()
+                    
+                if remote_version and remote_version != self.current_version:
+                    update_available = True
+            except Exception as e:
+                print(f"Update check network error: {e}")
+
+            def update_ui():
+                if update_available:
+                    self.update_status_lbl.config(text=f"Status: Update Available! ({remote_version})", fg="#10b981")
+                    self.update_now_btn.pack(side="left")
+                    
+                    if manual:
+                        # Explicit manual check popup offering Update Now vs Later
+                        if messagebox.askyesno("Update Available", f"A new version ({remote_version}) is available on GitHub!\n\nWould you like to install it now?"):
+                            self.perform_ota_update()
+                else:
+                    if manual:
+                        messagebox.showinfo("Up to Date", f"You are running the latest version ({self.current_version}).")
+                    self.update_status_lbl.config(text=f"Status: Up to date ({self.current_version})", fg="#10b981")
+                    self.update_now_btn.pack_forget()
+
+            self.after(0, update_ui)
+
+        threading.Thread(target=query_github, daemon=True).start()
 
     def perform_ota_update(self):
         self.update_status_lbl.config(text="Status: Running update script...", fg="#f59e0b")
@@ -473,7 +531,6 @@ class WifiManagerView(tk.Frame):
             
         ssid = clean_item
         
-        # Touch-friendly password window with On-Screen Keyboard
         pwd_win = tk.Toplevel(self)
         pwd_win.title(f"Connect to {ssid}")
         pwd_win.geometry("640x450")
@@ -487,7 +544,6 @@ class WifiManagerView(tk.Frame):
         pwd_entry.pack(fill="x", padx=30, pady=5, ipady=6)
         pwd_entry.focus()
         
-        # On-Screen Keyboard Frame
         kbd_frame = tk.Frame(pwd_win, bg="#1e293b")
         kbd_frame.pack(fill="both", expand=True, padx=10, pady=10)
         
@@ -515,7 +571,6 @@ class WifiManagerView(tk.Frame):
                                 command=lambda k=key: press_key(k))
                 btn.pack(side="left", padx=2)
                 
-        # Special action buttons row (Backspace & Clear)
         spec_frame = tk.Frame(kbd_frame, bg="#1e293b")
         spec_frame.pack(pady=3)
         
