@@ -300,7 +300,6 @@ class CapacitorAnalyzerView(tk.Frame):
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
         test_btn.pack(anchor="w")
 
-        # Multiplexer control lines mapped from Transistor Checker setup
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
 
@@ -312,7 +311,7 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Activating discharge circuit via Mux...\n")
+        self.result_box.insert(tk.END, "[System] Measuring capacitance...\n")
         
         def run_thread():
             try:
@@ -321,42 +320,27 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # Step 1: Engage the discharge transistor through your Mux configuration (Mux 2 channel 5 / pin 13 setup)
-                    discharge_mux_channel = 5  # Adjust to match the specific mux channel mapped to your discharge line
-                    
-                    self.set_mux(self.mux2_pins, discharge_mux_channel)
-                    time.sleep(1.0)  # Hold discharge high: transistor turns on, LED flashes, capacitor bleeds to ground
-                    
-                    # Step 2: Turn off discharge by switching the mux channel away
-                    self.set_mux(self.mux2_pins, 0)
-                    time.sleep(0.05)
-                    
+                    # Simple charge curve measurement using 10k resistor constant
+                    R_ohms = 10000.0
                     v_start = chan.voltage
-                    
-                    # Step 3: Compute charging time constant with an expanded window for electrolytic caps
-                    R_ohms = 10000.0  # Match your board's charging resistor value
                     target_v = v_start + ((3.3 - v_start) * 0.632)
                     
                     elapsed = 0.0
                     t_start_curve = time.time()
                     
-                    while time.time() - t_start_curve < 5.0:  # 5 second timeout window
+                    while time.time() - t_start_curve < 2.0:
                         current_v = chan.voltage
                         if current_v >= target_v:
                             elapsed = time.time() - t_start_curve
                             break
                         time.sleep(0.002)
                         
-                    if elapsed == 0.0 or abs(chan.voltage - v_start) < 0.02:
-                        res_text = "\n[Result] OPEN / NO COMPONENT: No valid capacitor detected or timeout reached.\n"
+                    if elapsed == 0.0:
+                        res_text = "\n[Result] OPEN / NO COMPONENT: Timeout reached.\n"
                     else:
                         capacitance_farads = elapsed / R_ohms
                         capacitance_uf = capacitance_farads * 1_000_000
-                        
-                        res_text = (f"\n[Result] SUCCESS!\n"
-                                    f"Capacitance: {capacitance_uf:.1f} uF\n"
-                                    f"Discharge Cycle: Verified (LED flashed)\n"
-                                    f"Status: Healthy\n")
+                        res_text = f"\n[Result] Capacitance: {capacitance_uf:.1f} uF\nStatus: Healthy\n"
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline.\n"
@@ -413,7 +397,6 @@ class SettingsView(tk.Frame):
         
         self.update_now_btn = tk.Button(btn_action_frame, text="Update Now", bg="#10b981", fg="#ffffff", font=("Helvetica", 10, "bold"),
                                         relief="flat", padx=15, pady=5, command=self.perform_ota_update)
-        # Hidden until an update is found
         self.update_now_btn.pack_forget() 
         
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
@@ -426,7 +409,6 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
 
     def on_show(self):
-        # Automatically check GitHub for updates every time settings view is entered
         self.check_github_updates(manual=False)
 
     def check_github_updates(self, manual=False):
@@ -434,7 +416,6 @@ class SettingsView(tk.Frame):
             self.update_status_lbl.config(text="Status: Checking GitHub...", fg="#f59e0b")
         self.update_idletasks()
 
-        # Dynamically re-read local version file on every check
         local_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
@@ -450,7 +431,6 @@ class SettingsView(tk.Frame):
             update_available = False
             remote_version = "Unknown"
             try:
-                # Append a timestamp query parameter to bypass GitHub edge caching
                 url = f"https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt?t={int(time.time())}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
