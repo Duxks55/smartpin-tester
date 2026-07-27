@@ -155,14 +155,19 @@ class TransistorCheckerView(tk.Frame):
                              font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_transistor_test)
         test_btn.pack(anchor="w")
+        
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
+        self.transistor_power_pin = 22  # GPIO 22 controlling 2N3904 base for MUX2 Pin 1 
+
         if HARDWARE_AVAILABLE:
             try:
                 GPIO.setmode(GPIO.BCM)
                 GPIO.setwarnings(False)
                 for p in self.mux1_pins + self.mux2_pins:
                     GPIO.setup(p, GPIO.OUT)
+                GPIO.setup(self.transistor_power_pin, GPIO.OUT)
+                GPIO.output(self.transistor_power_pin, GPIO.LOW)
             except Exception as e:
                 print(f"GPIO Setup Warning: {e}")
 
@@ -184,11 +189,23 @@ class TransistorCheckerView(tk.Frame):
 
                     def get_voltage(anode_pin, cathode_pin):
                         try:
+                            # Safely engage GPIO 22 if MUX2 is pointed at Pin 1
+                            if anode_pin == 1:
+                                GPIO.output(self.transistor_power_pin, GPIO.HIGH)
+                            else:
+                                GPIO.output(self.transistor_power_pin, GPIO.LOW)
+
                             self.set_mux(self.mux2_pins, anode_pin)
                             self.set_mux(self.mux1_pins, cathode_pin)
                             time.sleep(0.03)
-                            return chan.voltage
+                            v = chan.voltage
+                            
+                            # Clean up state immediately after reading
+                            GPIO.output(self.transistor_power_pin, GPIO.LOW)
+                            return v
                         except OSError:
+                            if HARDWARE_AVAILABLE:
+                                GPIO.output(self.transistor_power_pin, GPIO.LOW)
                             return None
 
                     readings = {}
@@ -351,7 +368,6 @@ class CapacitorAnalyzerView(tk.Frame):
     def full_drain(self, discharge_pin_mux1):
         """Uses the robust drain routine to clear the capacitor completely before testing."""
         try:
-            # Ensure shunt transistor is OFF during full drain unless needed, or handle appropriately
             if HARDWARE_AVAILABLE:
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
             self.set_mux(self.mux2_pins, self.discharge_channel)
@@ -373,11 +389,9 @@ class CapacitorAnalyzerView(tk.Frame):
             if v_check is None or v_check > 0.15:
                 return None
                
-            # Ensure the 2N3904 shunt transistor on GPIO 20 is OFF so it stops pulling Pin 3 to ground
             if HARDWARE_AVAILABLE:
                 GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
 
-            # Establish closed loop across both multiplexers
             self._log(f"[Debug] Setting MUX2 source channel {self.source_channel}, MUX1 ground channel {ground_pin}")
             self.set_mux(self.mux2_pins, self.source_channel)
             self.set_mux(self.mux1_pins, ground_pin)
@@ -393,9 +407,8 @@ class CapacitorAnalyzerView(tk.Frame):
                     self._log("[Debug Error] ADC returned None during charge loop.")
                     return None
                 
-                # Print live voltage ticks to see if it's climbing at all
                 elapsed_so_far = time.time() - start_time
-                if int(elapsed_so_far * 10) % 5 == 0:  # Log roughly every 0.5s
+                if int(elapsed_so_far * 10) % 5 == 0:
                     self._log(f"[Charging...] V = {measured_v:.3f}V (t={elapsed_so_far:.2f}s)")
 
                 if elapsed_so_far > 8.0:
