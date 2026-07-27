@@ -316,6 +316,7 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
         self.discharge_pin = 27
+        self.shunt_transistor_pin = 20
         self.discharge_channel = 3
         self.source_channel = 3
 
@@ -327,6 +328,10 @@ class CapacitorAnalyzerView(tk.Frame):
                     GPIO.setup(p, GPIO.OUT)
                 GPIO.setup(self.discharge_pin, GPIO.OUT)
                 GPIO.output(self.discharge_pin, GPIO.LOW)
+                
+                # Setup 2N3904 shunt transistor control pin
+                GPIO.setup(self.shunt_transistor_pin, GPIO.OUT)
+                GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
             except Exception as e:
                 print(f"GPIO Setup Warning (Capacitor): {e}")
 
@@ -346,6 +351,9 @@ class CapacitorAnalyzerView(tk.Frame):
     def full_drain(self, discharge_pin_mux1):
         """Uses the robust drain routine to clear the capacitor completely before testing."""
         try:
+            # Ensure shunt transistor is OFF during full drain unless needed, or handle appropriately
+            if HARDWARE_AVAILABLE:
+                GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
             self.set_mux(self.mux2_pins, self.discharge_channel)
             self.set_mux(self.mux1_pins, discharge_pin_mux1)
             GPIO.output(self.discharge_pin, GPIO.HIGH)
@@ -365,6 +373,10 @@ class CapacitorAnalyzerView(tk.Frame):
             if v_check is None or v_check > 0.15:
                 return None
                
+            # Ensure the 2N3904 shunt transistor on GPIO 20 is OFF so it stops pulling Pin 3 to ground
+            if HARDWARE_AVAILABLE:
+                GPIO.output(self.shunt_transistor_pin, GPIO.LOW)
+
             # Establish closed loop across both multiplexers
             self._log(f"[Debug] Setting MUX2 source channel {self.source_channel}, MUX1 ground channel {ground_pin}")
             self.set_mux(self.mux2_pins, self.source_channel)
