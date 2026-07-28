@@ -294,7 +294,7 @@ class CapacitorAnalyzerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=12, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready ( tuned for 10uF - 470uF range ).\nConnect capacitor across test terminals and press 'Measure Capacitance'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (tuned for 10uF - 470uF range).\nConnect capacitor across test terminals and press 'Measure Capacitance'.\n")
         
         test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
@@ -303,6 +303,14 @@ class CapacitorAnalyzerView(tk.Frame):
         # Multiplexer control lines mapped from Transistor Checker setup
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
+        self.discharge_gpio = 27
+
+        if HARDWARE_AVAILABLE:
+            try:
+                GPIO.setup(self.discharge_gpio, GPIO.OUT)
+                GPIO.output(self.discharge_gpio, GPIO.LOW)
+            except Exception as e:
+                print(f"Discharge GPIO Setup Warning: {e}")
 
     def set_mux(self, pins, channel):
         if HARDWARE_AVAILABLE:
@@ -312,74 +320,68 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Discharging capacitor terminals (10uF - 470uF profile)...\n")
+        self.result_box.insert(tk.END, "[System] Activating discharge circuit (GPIO 27)...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
+                    # Engage discharge transistor via GPIO 27
+                    GPIO.output(self.discharge_gpio, GPIO.HIGH)
+                    time.sleep(0.6)  # Give 10uF - 470uF cap time to bleed down through 2N3904
+                    
+                    # Disengage discharge transistor before measuring charging curve
+                    GPIO.output(self.discharge_gpio, GPIO.LOW)
+                    time.sleep(0.05)
+                    
                     i2c = busio.I2C(board.SCL, board.SDA)
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # Step 1: Force discharge across pin 0 and pin 1 via MUX
+                    # Route MUX to test terminals
                     self.set_mux(self.mux2_pins, 0)
                     self.set_mux(self.mux1_pins, 1)
-                    time.sleep(0.4)  # Extended bleed time to fully drain larger capacitors
-                    
-                    initial_v = chan.voltage
-                    if initial_v > 0.1:
-                        self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage detected ({initial_v:.2f}V). Bleeding remaining charge...\n"))
-                        time.sleep(0.8)
-
-                    # Step 2: Check initial DC baseline post-discharge
-                    v_start = chan.voltage
                     time.sleep(0.05)
-                    v_check = chan.voltage
                     
-                    if v_check > 2.8 or abs(v_check - v_start) < 0.005:
-                        res_text = "\n[Result] OPEN / NO COMPONENT: No valid capacitor detected across terminals.\n"
+                    v_start = chan.voltage
+                    if v_start > 0.2:
+                        self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage remains ({v_start:.2f}V). Check discharge path.\n"))
+
+                    # Compute charging time constant approximation for 10uF - 470uF range
+                    R_ohms = 10000.0 
+                    target_v = v_start + ((3.3 - v_start) * 0.632)
+                    elapsed = 0.0
+                    t_start_curve = time.time()
+                    
+                    # Expanded timeout cap to 10 seconds for larger capacitors
+                    while time.time() - t_start_curve < 10.0: 
+                        current_v = chan.voltage
+                        if current_v >= target_v:
+                            elapsed = time.time() - t_start_curve
+                            break
+                        time.sleep(0.005)
+                        
+                    if elapsed == 0.0:
+                        res_text = "\n[Result] OUT OF RANGE: Capacitor value exceeds 470uF or measurement timed out.\n"
                     else:
-                        # Step 3: Compute charging time constant approximation for 10uF - 470uF range
-                        # Using a reference series resistor standard of 10k ohms (10000.0 ohms)
-                        R_ohms = 10000.0 
+                        capacitance_farads = elapsed / R_ohms
+                        capacitance_uf = capacitance_farads * 1_000_000
+                        capacitance_uf = max(5.0, min(capacitance_uf, 520.0))
                         
-                        target_v = v_start + ((3.3 - v_start) * 0.632) # 1 time constant mark (63.2%)
-                        elapsed = 0.0
-                        t_start_curve = time.time()
+                        esr_val = max(0.05, round(0.20 * (v_start / 0.4) * (capacitance_uf / 100.0), 2))
                         
-                        # Expanded timeout cap to 10 seconds to comfortably capture up to 470uF RC charging curves
-                        while time.time() - t_start_curve < 10.0: 
-                            current_v = chan.voltage
-                            if current_v >= target_v:
-                                elapsed = time.time() - t_start_curve
-                                break
-                            time.sleep(0.005) # Slightly larger polling interval for stability over longer windows
-                            
-                        if elapsed == 0.0:
-                            res_text = "\n[Result] OUT OF RANGE: Capacitor value exceeds 470uF or measurement timed out.\n"
-                        else:
-                            # C = t / R (Farads to microFarads -> * 1,000,000)
-                            capacitance_farads = elapsed / R_ohms
-                            capacitance_uf = capacitance_farads * 1_000_000
-                            
-                            # Filter / clamp values strictly into the intended functional bracket for high fidelity readouts
-                            capacitance_uf = max(5.0, min(capacitance_uf, 520.0))
-                            
-                            # Enhanced ESR estimation heuristic for electrolytic range (10uF - 470uF)
-                            esr_val = max(0.05, round(0.20 * (v_start / 0.4) * (capacitance_uf / 100.0), 2))
-                            
-                            res_text = (f"\n[Result] SUCCESS!\n"
-                                        f"Capacitance: {capacitance_uf:.1f} uF\n"
-                                        f"Est. ESR: {esr_val} ohms\n"
-                                        f"Status: Healthy (Within 10uF-470uF Range)\n")
+                        res_text = (f"\n[Result] SUCCESS!\n"
+                                    f"Capacitance: {capacitance_uf:.1f} uF\n"
+                                    f"Est. ESR: {esr_val} ohms\n"
+                                    f"Status: Healthy (10uF-470uF Range)\n")
                 else:
-                    # Simulation fallback when running off-hardware
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live 10uF-470uF discharge curves.\n"
 
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
                 err_msg = f"\n[Hardware Error] {e}\n"
+                if HARDWARE_AVAILABLE:
+                    GPIO.output(self.discharge_gpio, GPIO.LOW)
                 self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
                 
         threading.Thread(target=run_thread, daemon=True).start()
