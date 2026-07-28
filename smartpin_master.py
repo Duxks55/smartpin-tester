@@ -322,18 +322,17 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[SmartPin] Starting Capacitor Measurement...\n")
+        self.result_box.insert(tk.END, "[SmartPin] Running Simple Capacitor Test...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
-                    # 1. Setup GPIO 22 to control the 2N3904 transistor switch
+                    # 1. Ensure transistor switch is OFF and fully discharge the test pins first
                     GPIO.setup(22, GPIO.OUT)
-                    GPIO.output(22, GPIO.LOW) # Keep transistor OFF during discharge
+                    GPIO.output(22, GPIO.LOW)
                     
-                    # 2. Discharge phase
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
-                    time.sleep(0.2)  
+                    time.sleep(1.0)  # Full 1 second to completely empty any residual charge
                     
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
                     time.sleep(0.05)
@@ -342,65 +341,38 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # 3. Route Mux using your physical wiring channels
+                    # 2. Route Mux
                     self.set_mux(self.mux2_pins, self.cap_test_channel)
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
                     
-                    # 4. Dynamic Baseline Capture
-                    baseline_voltage = chan.voltage
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Dynamic Baseline Voltage: {baseline_voltage:.3f}V\n"))
-
-                    R_ohms = 10000.0  # Make sure your emitter resistor matches this value
-                    target_delta = 1.0  # Lowered slightly to account for the voltage drop across the transistor
-                    target_voltage = baseline_voltage + target_delta
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Target threshold voltage: {target_voltage:.3f}V. Polling curve...\n"))
+                    # 3. Verify baseline is clean
+                    baseline = chan.voltage
                     
-                    elapsed = None
-                    max_poll_time = 4.0 
-                    highest_seen = baseline_voltage
-                    poll_count = 0
+                    # 4. SIMPLE CHARGE: Turn on transistor for a fixed window (e.g., 0.1 seconds)
+                    GPIO.output(22, GPIO.HIGH)
+                    time.sleep(0.1)  # Fixed charge duration
                     
-                    # --- ACTIVE CHARGE PHASE ---
-                    GPIO.output(22, GPIO.HIGH) # Turn ON transistor to inject power
-                    t_start_curve = time.time()
+                    # Read the voltage immediately after the fixed charge window
+                    final_v = chan.voltage
                     
-                    while (time.time() - t_start_curve) < max_poll_time: 
-                        current_v = chan.voltage
-                        poll_count += 1
-                        
-                        if current_v > highest_seen:
-                            highest_seen = current_v
-                        
-                        if current_v >= target_voltage and elapsed is None:
-                            elapsed = time.time() - t_start_curve
-                            break
-                        time.sleep(0.001)
-                        
-                    # End measurement - turn off transistor and discharge
-                    GPIO.output(22, GPIO.LOW) 
+                    # Turn off charging transistor and discharge again
+                    GPIO.output(22, GPIO.LOW)
+                    GPIO.output(self.discharge_gpio, GPIO.HIGH)
+                    time.sleep(0.1)
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
 
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Polled {poll_count} times. Peak V reached: {highest_seen:.3f}V\n"))
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Baseline: {baseline:.3f}V | Final V after 0.1s: {final_v:.3f}V\n"))
 
-                    if elapsed is not None:
-                        # Note: Math will need slight calibration based on the max voltage the transistor allows through
-                        capacitance_farads = elapsed / R_ohms 
-                        capacitance_uf = capacitance_farads * 1_000_000
-                        res_text = (f"\n[Result] SUCCESS!\n"
-                                    f"Elapsed Time: {elapsed:.4f}s\n"
-                                    f"Capacitance: {capacitance_uf:.1f} uF\n")
+                    # 5. Basic threshold check to see if a capacitor is present and working
+                    if final_v < 0.2:
+                        res_text = "\n[Result] OPEN / NO COMPONENT: Voltage didn't rise. Check wiring or contact.\n"
+                    elif final_v > 3.0:
+                        res_text = "\n[Result] SHORT / NO CAPACITANCE: Voltage instantly maxed out (Open circuit or missing cap).\n"
                     else:
-                        if highest_seen < (baseline_voltage + 0.1):
-                            diag_reason = "Error: Path open or charging current missing."
-                        elif highest_seen > 3.0:
-                            diag_reason = "Error: Node stuck high / shorted."
-                        else:
-                            diag_reason = "Timeout: Capacitance value out of range or too large."
-
-                        res_text = (f"\n[Result] DIAGNOSTIC TIMEOUT:\n"
-                                    f"- Baseline V: {baseline_voltage:.3f}V | Peak V: {highest_seen:.3f}V\n"
-                                    f"- Reason: {diag_reason}\n")
+                        res_text = (f"\n[Result] CAPACITOR DETECTED!\n"
+                                    f"Measured Voltage Level: {final_v:.3f}V\n"
+                                    f"(Note: Adjust your physical test wiring if this voltage doesn't change when swapping capacitor sizes)\n")
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline.\n"
