@@ -294,7 +294,7 @@ class CapacitorAnalyzerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=14, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Resilient Mode Enabled).\nConnect capacitor across Test Pin 1 and Test Pin 2, then press 'Measure Capacitance (Debug)'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Isolated Channel Mode).\nConnect capacitor across isolated Mux 2 path and Test Pin 2, then press 'Measure Capacitance (Debug)'.\n")
         
         test_btn = tk.Button(body, text="Measure Capacitance (Debug)", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
@@ -304,7 +304,8 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux2_pins = [7, 8, 9]
         self.discharge_gpio = 27
         
-        self.cap_test_channel = 1  
+        # Switched to an isolated channel (e.g., 0) to physically bypass the active 2N3904 transistor path
+        self.cap_test_channel = 0  
         self.return_test_channel = 2 
 
         if HARDWARE_AVAILABLE:
@@ -322,7 +323,7 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[SmartPin] Starting Resilient Capacitor Measurement...\n")
+        self.result_box.insert(tk.END, "[SmartPin] Starting Isolated Capacitor Measurement...\n")
         
         def run_thread():
             try:
@@ -338,7 +339,7 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # 2. Route Mux
+                    # 2. Route Mux using isolated channel
                     self.set_mux(self.mux2_pins, self.cap_test_channel)
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
