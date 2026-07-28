@@ -56,7 +56,6 @@ class SmartPinMasterApp(tk.Tk):
     def show_frame(self, frame_name):
         frame = self.frames[frame_name]
         frame.tkraise()
-        # Trigger any view-specific refresh on show if available
         if hasattr(frame, "on_show"):
             frame.on_show()
 
@@ -322,18 +321,16 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[SmartPin] Running Simple Capacitor Test...\n")
+        self.result_box.insert(tk.END, "[SmartPin] Measuring Capacitance Range...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
-                    # 1. Ensure transistor switch is OFF and fully discharge the test pins first
+                    # 1. Discharge fully first
                     GPIO.setup(22, GPIO.OUT)
                     GPIO.output(22, GPIO.LOW)
-                    
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
-                    time.sleep(1.0)  # Full 1 second to completely empty any residual charge
-                    
+                    time.sleep(0.5)
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
                     time.sleep(0.05)
                     
@@ -346,33 +343,36 @@ class CapacitorAnalyzerView(tk.Frame):
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
                     
-                    # 3. Verify baseline is clean
-                    baseline = chan.voltage
-                    
-                    # 4. SIMPLE CHARGE: Turn on transistor for a fixed window (e.g., 0.1 seconds)
+                    # 3. Start charging via resistor and time it until target voltage (e.g., 1.5V)
+                    target_v = 1.5
+                    start_time = time.time()
                     GPIO.output(22, GPIO.HIGH)
-                    time.sleep(0.1)  # Fixed charge duration
                     
-                    # Read the voltage immediately after the fixed charge window
-                    final_v = chan.voltage
+                    voltage = chan.voltage
+                    while voltage < target_v:
+                        voltage = chan.voltage
+                        if time.time() - start_time > 2.0:
+                            break
+                            
+                    elapsed = time.time() - start_time
                     
-                    # Turn off charging transistor and discharge again
+                    # 4. Cleanup discharge
                     GPIO.output(22, GPIO.LOW)
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
-                    time.sleep(0.1)
+                    time.sleep(0.3)
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
-
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Baseline: {baseline:.3f}V | Final V after 0.1s: {final_v:.3f}V\n"))
-
-                    # 5. Basic threshold check to see if a capacitor is present and working
-                    if final_v < 0.2:
-                        res_text = "\n[Result] OPEN / NO COMPONENT: Voltage didn't rise. Check wiring or contact.\n"
-                    elif final_v > 3.0:
-                        res_text = "\n[Result] SHORT / NO CAPACITANCE: Voltage instantly maxed out (Open circuit or missing cap).\n"
+                    
+                    # 5. Calculation mapping elapsed time to uF
+                    if elapsed >= 2.0:
+                        res_text = "\n[Result] TIMEOUT: Capacitor is too large or path is open.\n"
+                    elif elapsed < 0.005:
+                        res_text = "\n[Result] ERROR: Instant jump. Check component contact.\n"
                     else:
-                        res_text = (f"\n[Result] CAPACITOR DETECTED!\n"
-                                    f"Measured Voltage Level: {final_v:.3f}V\n"
-                                    f"(Note: Adjust your physical test wiring if this voltage doesn't change when swapping capacitor sizes)\n")
+                        R_ohms = 10000.0
+                        capacitance_uf = (elapsed / R_ohms) * 1_000_000
+                        res_text = (f"\n[Result] SUCCESS!\n"
+                                    f"Charge Time: {elapsed:.4f}s\n"
+                                    f"Estimated Capacitance: {capacitance_uf:.1f} uF\n")
                 else:
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline.\n"
