@@ -304,6 +304,8 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux2_pins = [7, 8, 9]
         self.discharge_gpio = 27
         
+        # NOTE: Update these channel assignments or your ADS channel (e.g., AnalogIn(ads, 0)) 
+        # to match your physical hardware layout if your Mux common line is on a different ADC pin.
         self.cap_test_channel = 1  # Test Pin 1 node
         self.return_test_channel = 2 # Test Pin 2 return path
 
@@ -336,6 +338,8 @@ class CapacitorAnalyzerView(tk.Frame):
                     
                     i2c = busio.I2C(board.SCL, board.SDA)
                     ads = ADS.ADS1115(i2c)
+                    
+                    # Ensure this matches the exact ADS1115 input channel your Mux common line is wired to (0, 1, 2, or 3)
                     chan = AnalogIn(ads, 0)
                     
                     # 2. Route Mux
