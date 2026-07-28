@@ -294,9 +294,9 @@ class CapacitorAnalyzerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=14, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Isolated Channel Mode).\nConnect capacitor across isolated Mux 2 path and Test Pin 2, then press 'Measure Capacitance (Debug)'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Software Isolation Mode).\nConnect capacitor and press 'Measure Capacitance'.\n")
         
-        test_btn = tk.Button(body, text="Measure Capacitance (Debug)", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
+        test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
         test_btn.pack(anchor="w")
 
@@ -304,8 +304,8 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux2_pins = [7, 8, 9]
         self.discharge_gpio = 27
         
-        # Switched to an isolated channel (e.g., 0) to physically bypass the active 2N3904 transistor path
-        self.cap_test_channel = 0  
+        # Original channels restored to use your existing physical wiring
+        self.cap_test_channel = 1  
         self.return_test_channel = 2 
 
         if HARDWARE_AVAILABLE:
@@ -323,11 +323,16 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[SmartPin] Starting Isolated Capacitor Measurement...\n")
+        self.result_box.insert(tk.END, "[SmartPin] Starting Capacitor Measurement (Software Isolation)...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
+                    # --- NEW: SOFTWARE ISOLATION ---
+                    # Force GPIO 22 to act as an input so the 2N3904 base floats 
+                    # and completely cuts off the 5V backfeed.
+                    GPIO.setup(22, GPIO.IN) 
+                    
                     # 1. Discharge phase
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
                     time.sleep(0.2)  
@@ -339,7 +344,7 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # 2. Route Mux using isolated channel
+                    # 2. Route Mux using original channels
                     self.set_mux(self.mux2_pins, self.cap_test_channel)
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
@@ -373,6 +378,10 @@ class CapacitorAnalyzerView(tk.Frame):
                         time.sleep(0.001)
                         
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
+                    
+                    # Restore GPIO 22 as an output for the Transistor Checker to use later
+                    GPIO.setup(22, GPIO.OUT)
+                    GPIO.output(22, GPIO.LOW)
 
                     self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Polled {poll_count} times. Peak V reached: {highest_seen:.3f}V\n"))
 
@@ -395,13 +404,18 @@ class CapacitorAnalyzerView(tk.Frame):
                                     f"- Reason: {diag_reason}\n")
                 else:
                     time.sleep(1)
-                    res_text = "\n[Simulation Mode] Hardware bus offline. Measured: 47 uF.\n"
+                    res_text = "\n[Simulation Mode] Hardware bus offline.\n"
 
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
                 err_msg = f"\n[Hardware Error] {e}\n"
                 if HARDWARE_AVAILABLE:
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
+                    # Attempt to restore GPIO 22 on error just in case
+                    try:
+                        GPIO.setup(22, GPIO.OUT)
+                    except:
+                        pass
                 self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
                 
         threading.Thread(target=run_thread, daemon=True).start()
