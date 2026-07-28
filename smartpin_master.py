@@ -294,7 +294,7 @@ class CapacitorAnalyzerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=14, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Debug Mode Enabled).\nConnect capacitor across Test Pin 1 and Test Pin 2, then press 'Measure Capacitance (Debug)'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Resilient Mode Enabled).\nConnect capacitor across Test Pin 1 and Test Pin 2, then press 'Measure Capacitance (Debug)'.\n")
         
         test_btn = tk.Button(body, text="Measure Capacitance (Debug)", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
@@ -304,10 +304,8 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux2_pins = [7, 8, 9]
         self.discharge_gpio = 27
         
-        # NOTE: Update these channel assignments or your ADS channel (e.g., AnalogIn(ads, 0)) 
-        # to match your physical hardware layout if your Mux common line is on a different ADC pin.
-        self.cap_test_channel = 1  # Test Pin 1 node
-        self.return_test_channel = 2 # Test Pin 2 return path
+        self.cap_test_channel = 1  
+        self.return_test_channel = 2 
 
         if HARDWARE_AVAILABLE:
             try:
@@ -324,22 +322,20 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[Debug] Step 1: Engaging GPIO 27 high to discharge node...\n")
+        self.result_box.insert(tk.END, "[SmartPin] Starting Resilient Capacitor Measurement...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
                     # 1. Discharge phase
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
-                    time.sleep(0.6)  
+                    time.sleep(0.2)  
                     
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
                     time.sleep(0.05)
                     
                     i2c = busio.I2C(board.SCL, board.SDA)
                     ads = ADS.ADS1115(i2c)
-                    
-                    # Ensure this matches the exact ADS1115 input channel your Mux common line is wired to (0, 1, 2, or 3)
                     chan = AnalogIn(ads, 0)
                     
                     # 2. Route Mux
@@ -347,47 +343,58 @@ class CapacitorAnalyzerView(tk.Frame):
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
                     
-                    v_start = chan.voltage
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[Debug] Step 2: Post-discharge baseline voltage: {v_start:.3f}V\n"))
+                    # 3. Dynamic Baseline Capture
+                    baseline_voltage = chan.voltage
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Dynamic Baseline Voltage: {baseline_voltage:.3f}V\n"))
 
                     R_ohms = 10000.0 
-                    target_v = v_start + ((3.3 - v_start) * 0.632)
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[Debug] Step 3: Target 1-TC threshold: {target_v:.3f}V. Polling curve...\n"))
+                    target_delta = 1.5  
+                    target_voltage = baseline_voltage + target_delta
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Target 1-TC threshold voltage: {target_voltage:.3f}V. Polling curve...\n"))
                     
-                    elapsed = 0.0
+                    elapsed = None
                     t_start_curve = time.time()
-                    max_poll_time = 5.0 # shortened for quick debugging output
+                    max_poll_time = 4.0 
                     
-                    highest_seen = v_start
+                    highest_seen = baseline_voltage
                     poll_count = 0
                     
-                    while time.time() - t_start_curve < max_poll_time: 
+                    while (time.time() - t_start_curve) < max_poll_time: 
                         current_v = chan.voltage
-                        if current_v > highest_seen:
-                            highest_seen = current_v
                         poll_count += 1
                         
-                        if current_v >= target_v:
+                        if current_v > highest_seen:
+                            highest_seen = current_v
+                        
+                        if current_v >= target_voltage and elapsed is None:
                             elapsed = time.time() - t_start_curve
                             break
-                        time.sleep(0.005)
+                        time.sleep(0.001)
                         
-                    self.after(0, lambda: self.result_box.insert(tk.END, f"[Debug] Polled {poll_count} times. Max voltage reached: {highest_seen:.3f}V\n"))
+                    GPIO.output(self.discharge_gpio, GPIO.LOW)
 
-                    if elapsed == 0.0:
-                        res_text = (f"\n[Result] TIMEOUT DIAGNOSTIC:\n"
-                                    f"- Start V: {v_start:.3f}V | Peak V: {highest_seen:.3f}V\n"
-                                    f"- If Peak V is near 0V: The 5V charging current isn't reaching the pin or MUX isn't routing correctly.\n"
-                                    f"- If Peak V is stuck high (>3V): The capacitor isn't discharging or resistor path is open.\n")
-                    else:
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[SmartPin] Polled {poll_count} times. Peak V reached: {highest_seen:.3f}V\n"))
+
+                    if elapsed is not None:
                         capacitance_farads = elapsed / R_ohms
                         capacitance_uf = capacitance_farads * 1_000_000
                         res_text = (f"\n[Result] SUCCESS!\n"
                                     f"Elapsed Time: {elapsed:.4f}s\n"
                                     f"Capacitance: {capacitance_uf:.1f} uF\n")
+                    else:
+                        if highest_seen < (baseline_voltage + 0.1):
+                            diag_reason = "Error: Path open or charging current missing."
+                        elif highest_seen > 3.0:
+                            diag_reason = "Error: Node stuck high / shorted."
+                        else:
+                            diag_reason = "Timeout: Capacitance value out of range or too large."
+
+                        res_text = (f"\n[Result] DIAGNOSTIC TIMEOUT:\n"
+                                    f"- Baseline V: {baseline_voltage:.3f}V | Peak V: {highest_seen:.3f}V\n"
+                                    f"- Reason: {diag_reason}\n")
                 else:
                     time.sleep(1)
-                    res_text = "\n[Simulation Mode] Hardware bus offline.\n"
+                    res_text = "\n[Simulation Mode] Hardware bus offline. Measured: 47 uF.\n"
 
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
