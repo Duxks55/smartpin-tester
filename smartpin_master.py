@@ -294,7 +294,7 @@ class CapacitorAnalyzerView(tk.Frame):
         
         self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=12, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (tuned for 10uF - 470uF range).\nConnect capacitor across test terminals and press 'Measure Capacitance'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Test Pin 1 mapped for 10k charging node).\nConnect capacitor across Test Pin 1 and Test Pin 2, then press 'Measure Capacitance'.\n")
         
         test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
@@ -304,6 +304,10 @@ class CapacitorAnalyzerView(tk.Frame):
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
         self.discharge_gpio = 27
+        
+        # Designated test pin connected to the 10k charging node & Mux channel mapping
+        self.cap_test_channel = 1  # Corresponds to Test Pin 1
+        self.return_test_channel = 2 # Corresponds to Test Pin 2 (return ground path)
 
         if HARDWARE_AVAILABLE:
             try:
@@ -320,14 +324,14 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Activating discharge circuit (GPIO 27)...\n")
+        self.result_box.insert(tk.END, "[System] Activating discharge circuit (GPIO 27) on Test Pin 1 node...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
-                    # Engage discharge transistor via GPIO 27
+                    # Engage discharge transistor via GPIO 27 to clear Test Pin 1 node
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
-                    time.sleep(0.6)  # Give 10uF - 470uF cap time to bleed down through 2N3904
+                    time.sleep(0.6)  
                     
                     # Disengage discharge transistor before measuring charging curve
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
@@ -337,22 +341,21 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # Route MUX to test terminals
-                    self.set_mux(self.mux2_pins, 0)
-                    self.set_mux(self.mux1_pins, 1)
+                    # Route MUX to Test Pin 1 (charging node) and Test Pin 2 (return path)
+                    self.set_mux(self.mux2_pins, self.cap_test_channel)
+                    self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
                     
                     v_start = chan.voltage
                     if v_start > 0.2:
                         self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage remains ({v_start:.2f}V). Check discharge path.\n"))
 
-                    # Compute charging time constant approximation for 10uF - 470uF range
+                    # Compute charging time constant approximation for 10uF - 470uF range via 10k resistor
                     R_ohms = 10000.0 
                     target_v = v_start + ((3.3 - v_start) * 0.632)
                     elapsed = 0.0
                     t_start_curve = time.time()
                     
-                    # Expanded timeout cap to 10 seconds for larger capacitors
                     while time.time() - t_start_curve < 10.0: 
                         current_v = chan.voltage
                         if current_v >= target_v:
@@ -375,7 +378,7 @@ class CapacitorAnalyzerView(tk.Frame):
                                     f"Status: Healthy (10uF-470uF Range)\n")
                 else:
                     time.sleep(1)
-                    res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live 10uF-470uF discharge curves.\n"
+                    res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live discharge curves on Test Pin 1.\n"
 
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
