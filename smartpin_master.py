@@ -292,22 +292,20 @@ class CapacitorAnalyzerView(tk.Frame):
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=30)
         
-        self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=12, bd=0, relief="flat")
+        self.result_box = tk.Text(body, bg="#1e293b", fg="#34d399", font=("Courier", 11), height=14, bd=0, relief="flat")
         self.result_box.pack(fill="both", expand=True, pady=(0, 15))
-        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Test Pin 1 mapped for 10k charging node).\nConnect capacitor across Test Pin 1 and Test Pin 2, then press 'Measure Capacitance'.\n")
+        self.result_box.insert("1.0", "[System] Capacitor Analyzer Ready (Debug Mode Enabled).\nConnect capacitor across Test Pin 1 and Test Pin 2, then press 'Measure Capacitance (Debug)'.\n")
         
-        test_btn = tk.Button(body, text="Measure Capacitance", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
+        test_btn = tk.Button(body, text="Measure Capacitance (Debug)", bg="#10b981", fg="#ffffff", font=("Helvetica", 12, "bold"),
                              relief="flat", padx=20, pady=10, command=self.execute_capacitor_test)
         test_btn.pack(anchor="w")
 
-        # Multiplexer control lines mapped from Transistor Checker setup
         self.mux1_pins = [4, 5, 6]
         self.mux2_pins = [7, 8, 9]
         self.discharge_gpio = 27
         
-        # Designated test pin connected to the 10k charging node & Mux channel mapping
-        self.cap_test_channel = 1  # Corresponds to Test Pin 1
-        self.return_test_channel = 2 # Corresponds to Test Pin 2 (return ground path)
+        self.cap_test_channel = 1  # Test Pin 1 node
+        self.return_test_channel = 2 # Test Pin 2 return path
 
         if HARDWARE_AVAILABLE:
             try:
@@ -324,16 +322,15 @@ class CapacitorAnalyzerView(tk.Frame):
 
     def execute_capacitor_test(self):
         self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "[System] Activating discharge circuit (GPIO 27) on Test Pin 1 node...\n")
+        self.result_box.insert(tk.END, "[Debug] Step 1: Engaging GPIO 27 high to discharge node...\n")
         
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
-                    # Engage discharge transistor via GPIO 27 to clear Test Pin 1 node
+                    # 1. Discharge phase
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
                     time.sleep(0.6)  
                     
-                    # Disengage discharge transistor before measuring charging curve
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
                     time.sleep(0.05)
                     
@@ -341,44 +338,52 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
-                    # Route MUX to Test Pin 1 (charging node) and Test Pin 2 (return path)
+                    # 2. Route Mux
                     self.set_mux(self.mux2_pins, self.cap_test_channel)
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
                     
                     v_start = chan.voltage
-                    if v_start > 0.2:
-                        self.after(0, lambda: self.result_box.insert(tk.END, f"[Warning] Residual voltage remains ({v_start:.2f}V). Check discharge path.\n"))
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[Debug] Step 2: Post-discharge baseline voltage: {v_start:.3f}V\n"))
 
-                    # Compute charging time constant approximation for 10uF - 470uF range via 10k resistor
                     R_ohms = 10000.0 
                     target_v = v_start + ((3.3 - v_start) * 0.632)
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[Debug] Step 3: Target 1-TC threshold: {target_v:.3f}V. Polling curve...\n"))
+                    
                     elapsed = 0.0
                     t_start_curve = time.time()
+                    max_poll_time = 5.0 # shortened for quick debugging output
                     
-                    while time.time() - t_start_curve < 10.0: 
+                    highest_seen = v_start
+                    poll_count = 0
+                    
+                    while time.time() - t_start_curve < max_poll_time: 
                         current_v = chan.voltage
+                        if current_v > highest_seen:
+                            highest_seen = current_v
+                        poll_count += 1
+                        
                         if current_v >= target_v:
                             elapsed = time.time() - t_start_curve
                             break
                         time.sleep(0.005)
                         
+                    self.after(0, lambda: self.result_box.insert(tk.END, f"[Debug] Polled {poll_count} times. Max voltage reached: {highest_seen:.3f}V\n"))
+
                     if elapsed == 0.0:
-                        res_text = "\n[Result] OUT OF RANGE: Capacitor value exceeds 470uF or measurement timed out.\n"
+                        res_text = (f"\n[Result] TIMEOUT DIAGNOSTIC:\n"
+                                    f"- Start V: {v_start:.3f}V | Peak V: {highest_seen:.3f}V\n"
+                                    f"- If Peak V is near 0V: The 5V charging current isn't reaching the pin or MUX isn't routing correctly.\n"
+                                    f"- If Peak V is stuck high (>3V): The capacitor isn't discharging or resistor path is open.\n")
                     else:
                         capacitance_farads = elapsed / R_ohms
                         capacitance_uf = capacitance_farads * 1_000_000
-                        capacitance_uf = max(5.0, min(capacitance_uf, 520.0))
-                        
-                        esr_val = max(0.05, round(0.20 * (v_start / 0.4) * (capacitance_uf / 100.0), 2))
-                        
                         res_text = (f"\n[Result] SUCCESS!\n"
-                                    f"Capacitance: {capacitance_uf:.1f} uF\n"
-                                    f"Est. ESR: {esr_val} ohms\n"
-                                    f"Status: Healthy (10uF-470uF Range)\n")
+                                    f"Elapsed Time: {elapsed:.4f}s\n"
+                                    f"Capacitance: {capacitance_uf:.1f} uF\n")
                 else:
                     time.sleep(1)
-                    res_text = "\n[Simulation Mode] Hardware bus offline. Connect hardware to run live discharge curves on Test Pin 1.\n"
+                    res_text = "\n[Simulation Mode] Hardware bus offline.\n"
 
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
@@ -434,7 +439,6 @@ class SettingsView(tk.Frame):
         
         self.update_now_btn = tk.Button(btn_action_frame, text="Update Now", bg="#10b981", fg="#ffffff", font=("Helvetica", 10, "bold"),
                                         relief="flat", padx=15, pady=5, command=self.perform_ota_update)
-        # Hidden until an update is found
         self.update_now_btn.pack_forget() 
         
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
@@ -447,7 +451,6 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w")
 
     def on_show(self):
-        # Automatically check GitHub for updates every time settings view is entered
         self.check_github_updates(manual=False)
 
     def check_github_updates(self, manual=False):
@@ -455,7 +458,6 @@ class SettingsView(tk.Frame):
             self.update_status_lbl.config(text="Status: Checking GitHub...", fg="#f59e0b")
         self.update_idletasks()
 
-        # Dynamically re-read local version file on every check
         local_version = "v1.0.0"
         try:
             version_file_path = os.path.join(os.path.dirname(__file__), "version.txt")
@@ -471,7 +473,6 @@ class SettingsView(tk.Frame):
             update_available = False
             remote_version = "Unknown"
             try:
-                # Append a timestamp query parameter to bypass GitHub edge caching
                 url = f"https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt?t={int(time.time())}"
                 req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
                 with urllib.request.urlopen(req, timeout=5) as response:
