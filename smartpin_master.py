@@ -1,4 +1,3 @@
-```python
 import tkinter as tk
 from tkinter import ttk, messagebox
 import subprocess
@@ -8,7 +7,6 @@ import time
 import sys
 import urllib.request
 import json
-from datetime import datetime
 
 # Set up I2C permissions for non-root users if needed
 try:
@@ -28,207 +26,40 @@ except (ImportError, NotImplementedError) as e:
     print(f"Hardware initialization note: {e}")
     HARDWARE_AVAILABLE = False
 
-# History storage path
-HISTORY_FILE = os.path.join(os.path.dirname(__file__), "history.json")
-
-def save_test_result(test_type, details):
-    history = []
-    if os.path.exists(HISTORY_FILE):
-        try:
-            with open(HISTORY_FILE, "r") as f:
-                history = json.load(f)
-        except Exception:
-            pass
-    
-    entry = {
-        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "type": test_type,
-        "details": details
-    }
-    history.insert(0, entry)
-    history = history[:100]
-    
+# --- Background IoT Web Server ---
+def start_iot_server():
     try:
-        with open(HISTORY_FILE, "w") as f:
-            json.dump(history, f, indent=4)
+        from http.server import HTTPServer, BaseHTTPRequestHandler
+        
+        class IoTHandler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if self.path == '/' or self.path == '/json':
+                    self.send_response(200)
+                    self.send_header("Content-type", "application/json")
+                    self.end_headers()
+                    
+                    # Gather lightweight system/telemetry data
+                    data = {
+                        "status": "online",
+                        "hardware_available": HARDWARE_AVAILABLE,
+                        "timestamp": time.time()
+                    }
+                    self.wfile.write(json.dumps(data).encode("utf-8"))
+                else:
+                    self.send_response(404)
+                    self.end_headers()
+                    self.wfile.write(b"Not Found")
+                    
+            def log_message(self, format, *args):
+                pass # Suppress server logs to keep console clean
+
+        server = HTTPServer(('0.0.0.0', 5000), IoTHandler)
+        server.serve_forever()
     except Exception as e:
-        print(f"Failed to save history: {e}")
+        print(f"IoT Server Error: {e}")
 
-# ==================== FLASK IOT WEB SERVER ====================
-try:
-    from flask import Flask, render_template_string, jsonify, request, redirect, url_for
-    FLASK_AVAILABLE = True
-except ImportError:
-    FLASK_AVAILABLE = False
-
-flask_app = Flask("SmartPinIoT")
-
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>SmartPin IoT Dashboard</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
-        .container { max-width: 900px; margin: auto; }
-        h1 { color: #38bdf8; border-bottom: 2px solid #1e293b; padding-bottom: 10px; }
-        .card { background: #1e293b; border-radius: 8px; padding: 20px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
-        .btn { background: #3b82f6; color: white; border: none; padding: 10px 20px; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold; text-decoration: none; display: inline-block; margin-right: 10px; margin-bottom: 10px; }
-        .btn-green { background: #10b981; }
-        .btn-purple { background: #8b5cf6; }
-        .btn:hover { opacity: 0.9; }
-        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        th, td { text-align: left; padding: 12px; border-bottom: 1px solid #334155; font-size: 14px; }
-        th { color: #38bdf8; }
-        pre { background: #0f172a; padding: 10px; border-radius: 4px; overflow-x: auto; color: #34d399; }
-        .nav { margin-bottom: 20px; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>SmartPin IoT Telemetry Node</h1>
-        <div class="nav">
-            <a href="/" class="btn">Dashboard</a>
-            <a href="/history" class="btn btn-green">View Test History</a>
-            <a href="/settings" class="btn btn-purple">Settings</a>
-        </div>
-        {% block content %}{% endblock %}
-    </div>
-</body>
-</html>
-"""
-
-INDEX_CONTENT = """
-{% extends "base" %}
-{% block content %}
-<div class="card">
-    <h2>Remote Hardware Control</h2>
-    <p>Trigger live component analyzers directly from your network interface.</p>
-    <button class="btn" onclick="runTest('transistor')">Run Transistor Check</button>
-    <button class="btn btn-green" onclick="runTest('capacitor')">Run Capacitor Test</button>
-    <div id="result-box" style="margin-top: 15px;"></div>
-</div>
-
-<div class="card">
-    <h2>Live System Status</h2>
-    <p><strong>Hardware Bus:</strong> {{ hw_status }}</p>
-    <p><strong>Active Version:</strong> {{ version }}</p>
-</div>
-
-<script>
-function runTest(type) {
-    document.getElementById('result-box').innerHTML = "<pre>Running " + type + " test on hardware...</pre>";
-    fetch('/api/run_' + type, {method: 'POST'})
-    .then(res => res.json())
-    .then(data => {
-        document.getElementById('result-box').innerHTML = "<pre>" + data.result + "</pre>";
-    }).catch(err => {
-        document.getElementById('result-box').innerHTML = "<pre>Error executing test.</pre>";
-    });
-}
-</script>
-{% endblock %}
-"""
-
-HISTORY_CONTENT = """
-{% extends "base" %}
-{% block content %}
-<div class="card">
-    <h2>Saved Test History Records</h2>
-    <p>Listing previous telemetry captures and component readings.</p>
-    <table>
-        <tr>
-            <th>Timestamp</th>
-            <th>Module Type</th>
-            <th>Analysis Details</th>
-        </tr>
-        {% for row in history %}
-        <tr>
-            <td>{{ row.timestamp }}</td>
-            <td><strong style="color: #38bdf8;">{{ row.type }}</strong></td>
-            <td><pre style="margin:0; background:transparent;">{{ row.details }}</pre></td>
-        </tr>
-        {% endfor %}
-    </table>
-</div>
-{% endblock %}
-"""
-
-SETTINGS_CONTENT = """
-{% extends "base" %}
-{% block content %}
-<div class="card">
-    <h2>System Settings & Maintenance</h2>
-    <p>Current version: <strong>{{ version }}</strong></p>
-    <p>Manage firmware packages and check remote OTA repositories.</p>
-    <a href="/api/check_update" class="btn btn-purple">Check GitHub Updates</a>
-    <div id="settings-msg" style="margin-top:15px; color:#38bdf8;"></div>
-</div>
-<script>
-document.querySelector('a[href="/api/check_update"]').addEventListener('click', function(e) {
-    e.preventDefault();
-    document.getElementById('settings-msg').innerText = "Checking remote repository...";
-    fetch('/api/check_update').then(res => res.json()).then(data => {
-        document.getElementById('settings-msg').innerText = data.status;
-    });
-});
-</script>
-{% endblock %}
-"""
-
-if FLASK_AVAILABLE:
-    py_ver = "v1.0.0"
-    try:
-        vf = os.path.join(os.path.dirname(__file__), "version.txt")
-        if os.path.exists(vf):
-            with open(vf, "r") as f:
-                py_ver = f.read().strip()
-    except:
-        pass
-
-    @flask_app.route("/")
-    def flask_index():
-        return render_template_string(HTML_TEMPLATE.replace('{% block content %}{% endblock %}', INDEX_CONTENT), 
-                                      hw_status="Online" if HARDWARE_AVAILABLE else "Simulation Mode", version=py_ver)
-
-    @flask_app.route("/history")
-    def flask_history():
-        history = []
-        if os.path.exists(HISTORY_FILE):
-            try:
-                with open(HISTORY_FILE, "r") as f:
-                    history = json.load(f)
-            except:
-                pass
-        return render_template_string(HTML_TEMPLATE.replace('{% block content %}{% endblock %}', HISTORY_CONTENT), history=history)
-
-    @flask_app.route("/settings")
-    def flask_settings():
-        return render_template_string(HTML_TEMPLATE.replace('{% block content %}{% endblock %}', SETTINGS_CONTENT), version=py_ver)
-
-    @flask_app.route("/api/run_transistor", methods=["POST"])
-    def api_transistor():
-        res = "[Remote IoT] Transistor Test Executed. Type: NPN Transistor, Gain: 185"
-        save_test_result("Transistor Checker", res)
-        return jsonify({"result": res})
-
-    @flask_app.route("/api/run_capacitor", methods=["POST"])
-    def api_capacitor():
-        res = "[Remote IoT] Capacitor Test Executed. Estimated Capacitance: 470.0 uF"
-        save_test_result("Capacitor Analyzer", res)
-        return jsonify({"result": res})
-
-    @flask_app.route("/api/check_update")
-    def api_check_update():
-        return jsonify({"status": f"System is up to date ({py_ver})."})
-
-def start_flask_server():
-    if FLASK_AVAILABLE:
-        try:
-            flask_app.run(host="0.0.0.0", port=5000, debug=False, use_reloader=False)
-        except Exception as e:
-            print(f"Flask server error: {e}")
+# Start the IoT server thread daemon so it closes automatically with the app
+threading.Thread(target=start_iot_server, daemon=True).start()
 
 
 class SmartPinMasterApp(tk.Tk):
@@ -247,7 +78,7 @@ class SmartPinMasterApp(tk.Tk):
         self.container.pack(fill="both", expand=True)
         
         self.frames = {}
-        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, HistoryView, SettingsView, WifiManagerView):
+        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
             frame = F(parent=self.container, controller=self)
             self.frames[frame_name] = frame
@@ -286,8 +117,8 @@ class MainDashboard(tk.Frame):
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
-            ("Test History Logs", "View previously saved records", "#f59e0b", lambda: controller.show_frame("HistoryView")),
-            ("IoT Dashboard Status", "Open local network telemetry node (Port 5000)", "#8b5cf6", lambda: self.open_link("http://localhost:5000"))
+            ("IoT Dashboard Status", "Open local network telemetry node", "#f59e0b", lambda: self.open_link("http://localhost:5000")),
+            ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check)
         ]
         
         for i, (name, desc, color, cmd) in enumerate(modules):
@@ -315,6 +146,12 @@ class MainDashboard(tk.Frame):
         import webbrowser
         webbrowser.open(url)
 
+    def run_i2c_check(self):
+        try:
+            output = subprocess.check_output(["i2cdetect", "-y", "1"]).decode()
+            messagebox.showinfo("I2C Bus Scan", output)
+        except Exception as e:
+            messagebox.showerror("Error", f"Failed to run i2cdetect: {e}")
 
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -468,14 +305,12 @@ class TransistorCheckerView(tk.Frame):
                     time.sleep(1)
                     res_text = "\n[Simulation Mode] Hardware bus offline. NPN Transistor verified (Base: 1, Collector: 2, Emitter: 3, hFE: 185).\n"
 
-                save_test_result("Transistor Checker", res_text.strip())
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
                 err_msg = f"\n[Hardware Error] {e}\nCheck wiring or power connection.\n"
                 self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
                 
         threading.Thread(target=run_thread, daemon=True).start()
-
 
 class CapacitorAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -527,6 +362,7 @@ class CapacitorAnalyzerView(tk.Frame):
         def run_thread():
             try:
                 if HARDWARE_AVAILABLE:
+                    # 1. Discharge fully first
                     GPIO.setup(22, GPIO.OUT)
                     GPIO.output(22, GPIO.LOW)
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
@@ -538,10 +374,12 @@ class CapacitorAnalyzerView(tk.Frame):
                     ads = ADS.ADS1115(i2c)
                     chan = AnalogIn(ads, 0)
                     
+                    # 2. Route Mux
                     self.set_mux(self.mux2_pins, self.cap_test_channel)
                     self.set_mux(self.mux1_pins, self.return_test_channel)
                     time.sleep(0.05)
                     
+                    # 3. Start charging via resistor and time it until target voltage (e.g., 1.5V)
                     target_v = 1.5
                     start_time = time.time()
                     GPIO.output(22, GPIO.HIGH)
@@ -554,11 +392,13 @@ class CapacitorAnalyzerView(tk.Frame):
                             
                     elapsed = time.time() - start_time
                     
+                    # 4. Cleanup discharge
                     GPIO.output(22, GPIO.LOW)
                     GPIO.output(self.discharge_gpio, GPIO.HIGH)
                     time.sleep(0.3)
                     GPIO.output(self.discharge_gpio, GPIO.LOW)
                     
+                    # 5. Calculation mapping elapsed time to uF
                     if elapsed >= 2.0:
                         res_text = "\n[Result] TIMEOUT: Capacitor is too large or path is open.\n"
                     elif elapsed < 0.005:
@@ -571,9 +411,8 @@ class CapacitorAnalyzerView(tk.Frame):
                                     f"Estimated Capacitance: {capacitance_uf:.1f} uF\n")
                 else:
                     time.sleep(1)
-                    res_text = "\n[Simulation Mode] Success! Estimated Capacitance: 470.0 uF (Charge Time: 4.7000s)\n"
+                    res_text = "\n[Simulation Mode] Hardware bus offline.\n"
 
-                save_test_result("Capacitor Analyzer", res_text.strip())
                 self.after(0, lambda: self.result_box.insert(tk.END, res_text))
             except Exception as e:
                 err_msg = f"\n[Hardware Error] {e}\n"
@@ -586,58 +425,6 @@ class CapacitorAnalyzerView(tk.Frame):
                 self.after(0, lambda: self.result_box.insert(tk.END, err_msg))
                 
         threading.Thread(target=run_thread, daemon=True).start()
-
-
-class HistoryView(tk.Frame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, bg="#0f172a")
-        self.controller = controller
-        
-        header = tk.Frame(self, bg="#1e293b", height=60)
-        header.pack(fill="x", side="top")
-        header.pack_propagate(False)
-        
-        tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
-        tk.Label(header, text="SAVED TEST HISTORY LOGS", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
-        
-        body = tk.Frame(self, bg="#0f172a")
-        body.pack(fill="both", expand=True, padx=30, pady=20)
-        
-        list_frame = tk.Frame(body, bg="#1e293b", padx=5, pady=5)
-        list_frame.pack(fill="both", expand=True, pady=(0, 10))
-        
-        scrollbar = tk.Scrollbar(list_frame)
-        scrollbar.pack(side="right", fill="y")
-        
-        self.history_box = tk.Text(list_frame, bg="#0f172a", fg="#f8fafc", font=("Courier", 10),
-                                   bd=0, highlightthickness=0, yscrollcommand=scrollbar.set)
-        self.history_box.pack(fill="both", expand=True)
-        scrollbar.config(command=self.history_box.yview)
-        
-        tk.Button(body, text="Refresh Logs", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=6, command=self.load_history).pack(anchor="w")
-
-    def on_show(self):
-        self.load_history()
-
-    def load_history(self):
-        self.history_box.delete("1.0", tk.END)
-        if os.path.exists(HISTORY_FILE):
-            try:
-                with open(HISTORY_FILE, "r") as f:
-                    history = json.load(f)
-                    if not history:
-                        self.history_box.insert("1.0", "No test logs recorded yet.")
-                        return
-                    for entry in history:
-                        log_str = f"[{entry['timestamp']}] MODULE: {entry['type']}\n{entry['details']}\n" + "-"*50 + "\n"
-                        self.history_box.insert(tk.END, log_str)
-            except Exception as e:
-                self.history_box.insert("1.0", f"Error loading history file: {e}")
-        else:
-            self.history_box.insert("1.0", "No history log found.")
-
 
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
@@ -957,12 +744,5 @@ class WifiManagerView(tk.Frame):
 
 
 if __name__ == "__main__":
-    if FLASK_AVAILABLE:
-        flask_thread = threading.Thread(target=start_flask_server, daemon=True)
-        flask_thread.start()
-        print("[SmartPin] IoT Web Dashboard running on http://0.0.0.0:5000")
-
     app = SmartPinMasterApp()
     app.mainloop()
-
-```
