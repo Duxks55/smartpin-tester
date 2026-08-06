@@ -496,8 +496,15 @@ class SettingsView(tk.Frame):
         self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.version_lbl.pack(anchor="w", pady=(5, 2))
         
-        self.update_status_lbl = tk.Label(update_card, text="Status: Ready", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
+        self.update_status_lbl = tk.Label(update_card, text="Status: Ready to check GitHub", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 10))
+        
+        btn_row = tk.Frame(update_card, bg="#1e293b")
+        btn_row.pack(anchor="w", pady=5)
+        
+        self.check_btn = tk.Button(btn_row, text="Check for Updates", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                                   relief="flat", padx=12, pady=6, command=self.check_for_updates)
+        self.check_btn.pack(side="left", padx=(0, 10))
         
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         wifi_card.pack(fill="x", pady=10)
@@ -505,6 +512,54 @@ class SettingsView(tk.Frame):
         tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w", pady=(5, 0))
+
+    def check_for_updates(self):
+        self.update_status_lbl.config(text="Status: Checking GitHub repository...", fg="#f59e0b")
+        self.check_btn.config(state="disabled")
+        
+        def run_check():
+            try:
+                # Raw URL to version.txt on GitHub main branch
+                url = "https://raw.githubusercontent.com/Duxks55/smartpin-tester/main/version.txt"
+                req = urllib.request.Request(url, headers={'User-Agent': 'SmartPin-Updater'})
+                with urllib.request.urlopen(req, timeout=5) as response:
+                    remote_version = response.read().decode('utf-8').strip()
+                
+                if remote_version != self.current_version:
+                    self.after(0, lambda: self.prompt_apply_update(remote_version))
+                else:
+                    self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Up to date ({self.current_version})", fg="#10b981"))
+            except Exception as e:
+                self.after(0, lambda: self.update_status_lbl.config(text=f"Status: Check failed ({e})", fg="#ef4444"))
+            finally:
+                self.after(0, lambda: self.check_btn.config(state="normal"))
+                
+        threading.Thread(target=run_check, daemon=True).start()
+
+    def prompt_apply_update(self, remote_version):
+        self.update_status_lbl.config(text=f"New version {remote_version} available!", fg="#38bdf8")
+        if messagebox.askyesno("Update Available", f"A new version ({remote_version}) is available on GitHub.\nWould you like to install it and restart now?"):
+            self.execute_ota_update()
+
+    def execute_ota_update(self):
+        self.update_status_lbl.config(text="Status: Pulling update & restarting...", fg="#f59e0b")
+        def run_update():
+            try:
+                script_path = "/home/tpj655/smartpin-tester/update_kiosk.sh"
+                if os.path.exists(script_path):
+                    subprocess.run(["bash", script_path], check=True)
+                else:
+                    # Fallback direct git reset if script is absent
+                    os.chdir("/home/tpj655/smartpin-tester")
+                    subprocess.run(["git", "fetch", "origin"], check=True)
+                    subprocess.run(["git", "reset", "--hard", "origin/main"], check=True)
+                    os.execl(sys.executable, sys.executable, *sys.argv)
+            except Exception as e:
+                self.after(0, lambda: messagebox.showerror("Update Error", f"Failed to execute update: {e}"))
+                self.after(0, lambda: self.update_status_lbl.config(text="Status: Update failed", fg="#ef4444"))
+                
+        threading.Thread(target=run_update, daemon=True).start()
+
 
 class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
