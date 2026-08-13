@@ -128,48 +128,50 @@ class SmartPinMasterApp(tk.Tk):
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
                 
+                # --- CHECK PNP FIRST (Fixes flipped PNP misidentification) ---
                 for base in [0, 1, 2]:
                     others = [p for p in [0, 1, 2] if p != base]
-                    npn_match = True
-                    for target in others:
-                        v = readings.get((base, target), 0)
+                    pnp_match = True
+                    for source_pin in others:
+                        v = readings.get((source_pin, base), 0)
                         if not (0.15 < v < 0.9 or v > 2.5):
-                            npn_match = False
+                            pnp_match = False
                             break
-                    if npn_match:
-                        ce_forward = readings.get((others[0], others[1]), 0)
-                        ce_reverse = readings.get((others[1], others[0]), 0)
-                        if ce_reverse > ce_forward and ce_reverse > 1.5:
-                            continue
-
-                        v_a = readings.get((base, others[0]), 0)
-                        v_b = readings.get((base, others[1]), 0)
+                    if pnp_match:
+                        v_a = readings.get((others[0], base), 0)
+                        v_b = readings.get((others[1], base), 0)
                         if v_a > v_b:
                             collector, emitter = others[1], others[0]
                         else:
                             collector, emitter = others[0], others[1]
 
-                        found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
+                        found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
                         break
 
+                # --- CHECK NPN IF NOT PNP ---
                 if not found_type:
                     for base in [0, 1, 2]:
                         others = [p for p in [0, 1, 2] if p != base]
-                        pnp_match = True
-                        for source_pin in others:
-                            v = readings.get((source_pin, base), 0)
+                        npn_match = True
+                        for target in others:
+                            v = readings.get((base, target), 0)
                             if not (0.15 < v < 0.9 or v > 2.5):
-                                pnp_match = False
+                                npn_match = False
                                 break
-                        if pnp_match:
-                            v_a = readings.get((others[0], base), 0)
-                            v_b = readings.get((others[1], base), 0)
+                        if npn_match:
+                            ce_forward = readings.get((others[0], others[1]), 0)
+                            ce_reverse = readings.get((others[1], others[0]), 0)
+                            if ce_reverse > ce_forward and ce_reverse > 1.5:
+                                continue
+
+                            v_a = readings.get((base, others[0]), 0)
+                            v_b = readings.get((base, others[1]), 0)
                             if v_a > v_b:
                                 collector, emitter = others[1], others[0]
                             else:
                                 collector, emitter = others[0], others[1]
 
-                            found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
+                            found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                             break
 
                 if found_type:
