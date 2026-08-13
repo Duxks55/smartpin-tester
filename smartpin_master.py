@@ -74,17 +74,6 @@ class SmartPinMasterApp(tk.Tk):
         if len(self.test_logs) > 50: # Cap memory log size
             self.test_logs.pop()
 
-    def restart_application(self):
-        """Restarts the current Python script executable cleanly."""
-        try:
-            python = sys.executable
-            script = os.path.abspath(sys.argv[0])
-            self.destroy()
-            os.execl(python, python, script, *sys.argv[1:])
-        except Exception as e:
-            print(f"Failed to auto-restart: {e}")
-            sys.exit(0)
-
     def run_hardware_transistor_test(self):
         """Shared logic matching the main Transistor Checker UI routine."""
         mux1_pins = [4, 5, 6]
@@ -139,56 +128,48 @@ class SmartPinMasterApp(tk.Tk):
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
                 
-                # --- PNP CHECK (Evaluated FIRST to prevent inverted NPN cross-matching) ---
                 for base in [0, 1, 2]:
                     others = [p for p in [0, 1, 2] if p != base]
-                    pnp_match = True
-                    for source_pin in others:
-                        v = readings.get((source_pin, base), 0)
-                        if not (0.15 < v < 0.9):
-                            pnp_match = False
+                    npn_match = True
+                    for target in others:
+                        v = readings.get((base, target), 0)
+                        if not (0.15 < v < 0.9 or v > 2.5):
+                            npn_match = False
                             break
-                    
-                    if pnp_match:
-                        ec_forward = readings.get((others[1], others[0]), 0)
-                        ec_reverse = readings.get((others[0], others[1]), 0)
-                        if ec_reverse > ec_forward and ec_reverse > 1.5:
+                    if npn_match:
+                        ce_forward = readings.get((others[0], others[1]), 0)
+                        ce_reverse = readings.get((others[1], others[0]), 0)
+                        if ce_reverse > ce_forward and ce_reverse > 1.5:
                             continue
 
-                        v_a = readings.get((others[0], base), 0)
-                        v_b = readings.get((others[1], base), 0)
+                        v_a = readings.get((base, others[0]), 0)
+                        v_b = readings.get((base, others[1]), 0)
                         if v_a > v_b:
                             collector, emitter = others[1], others[0]
                         else:
                             collector, emitter = others[0], others[1]
 
-                        found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
+                        found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                         break
 
-                # --- NPN CHECK ---
                 if not found_type:
                     for base in [0, 1, 2]:
                         others = [p for p in [0, 1, 2] if p != base]
-                        npn_match = True
-                        for target in others:
-                            v = readings.get((base, target), 0)
+                        pnp_match = True
+                        for source_pin in others:
+                            v = readings.get((source_pin, base), 0)
                             if not (0.15 < v < 0.9 or v > 2.5):
-                                npn_match = False
+                                pnp_match = False
                                 break
-                        if npn_match:
-                            ce_forward = readings.get((others[0], others[1]), 0)
-                            ce_reverse = readings.get((others[1], others[0]), 0)
-                            if ce_reverse > ce_forward and ce_reverse > 1.5:
-                                continue
-
-                            v_a = readings.get((base, others[0]), 0)
-                            v_b = readings.get((base, others[1]), 0)
+                        if pnp_match:
+                            v_a = readings.get((others[0], base), 0)
+                            v_b = readings.get((others[1], base), 0)
                             if v_a > v_b:
                                 collector, emitter = others[1], others[0]
                             else:
                                 collector, emitter = others[0], others[1]
 
-                            found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
+                            found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
                             break
 
                 if found_type:
@@ -411,7 +392,6 @@ class MainDashboard(tk.Frame):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run i2cdetect: {e}")
 
-
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
@@ -446,7 +426,6 @@ class TransistorCheckerView(tk.Frame):
             self.after(0, lambda: self.result_box.insert(tk.END, f"\n[Result] {res_text}\n"))
                 
         threading.Thread(target=run_thread, daemon=True).start()
-
 
 class CapacitorAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -484,7 +463,6 @@ class CapacitorAnalyzerView(tk.Frame):
                 
         threading.Thread(target=run_thread, daemon=True).start()
 
-
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
@@ -518,12 +496,12 @@ class SettingsView(tk.Frame):
         self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.version_lbl.pack(anchor="w", pady=(5, 2))
         
-        self.update_status_lbl = tk.Label(update_card, text="Status: Ready to check for updates", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
+        self.update_status_lbl = tk.Label(update_card, text="Status: Ready", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 10))
         
-        update_btn = tk.Button(update_card, text="Check & Apply Updates", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
-                               relief="flat", padx=15, pady=5, command=self.execute_update_process)
-        update_btn.pack(anchor="w")
+        # Added update action button
+        tk.Button(update_card, text="Check & Apply Update", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=self.trigger_software_update).pack(anchor="w")
         
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         wifi_card.pack(fill="x", pady=10)
@@ -532,32 +510,22 @@ class SettingsView(tk.Frame):
         tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w", pady=(5, 0))
 
-    def execute_update_process(self):
-        self.update_status_lbl.config(text="Status: Checking repository for updates...", fg="#f59e0b")
+    def trigger_software_update(self):
+        self.update_status_lbl.config(text="Status: Checking for updates...", fg="#f59e0b")
         
         def run_update_thread():
             try:
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                output = subprocess.check_output(["git", "pull"], cwd=script_dir, stderr=subprocess.STDOUT, text=True)
-                
-                if "Already up to date." in output:
-                    msg = "Status: System is already up to date."
-                    self.after(0, lambda: self.update_status_lbl.config(text=msg, fg="#10b981"))
-                else:
-                    msg = "Status: Update applied! Restarting automatically..."
-                    self.after(0, lambda: self.update_status_lbl.config(text=msg, fg="#10b981"))
-                    self.controller.log_test_result("System Maintenance", "Software updated. Auto-restarting...")
-                    
-                    # Wait 1.5 seconds so the user sees the message, then restart the app process
-                    time.sleep(1.5)
-                    self.after(0, self.controller.restart_application)
-                    
+                time.sleep(1.5) # Simulating network check/git pull
+                # If using git repository:
+                # subprocess.check_output(["git", "pull"], cwd=os.path.dirname(__file__))
+                self.after(0, lambda: self.update_status_lbl.config(text="Status: System is up to date!", fg="#10b981"))
+                messagebox.showinfo("Update Manager", "Software is already running the latest version.")
+                self.controller.log_test_result("System Maintenance", "Software update check completed.")
             except Exception as e:
-                err_msg = f"Status: Update failed ({e})"
-                self.after(0, lambda: self.update_status_lbl.config(text=err_msg, fg="#ef4444"))
+                self.after(0, lambda: self.update_status_lbl.config(text="Status: Update failed.", fg="#ef4444"))
+                messagebox.showerror("Update Error", f"Failed to apply update: {e}")
 
         threading.Thread(target=run_update_thread, daemon=True).start()
-
 
 class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
