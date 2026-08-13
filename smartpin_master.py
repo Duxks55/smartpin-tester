@@ -128,19 +128,18 @@ class SmartPinMasterApp(tk.Tk):
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
                 
-                # --- CHECK PNP FIRST (With strict signature isolation) ---
+                # --- CHECK PNP FIRST (Balanced signature window) ---
                 for base in [0, 1, 2]:
                     others = [p for p in [0, 1, 2] if p != base]
                     pnp_match = True
                     for source_pin in others:
                         v = readings.get((source_pin, base), 0)
-                        # Narrowed window to prevent NPN diode drops from triggering PNP
-                        if not (0.45 < v < 0.85):
+                        # Slightly expanded threshold window to prevent valid PNP from showing dead
+                        if not (0.40 < v < 0.90):
                             pnp_match = False
                             break
                     
                     if pnp_match:
-                        # Extra validation: ensure it's not an NPN acting in reverse
                         ce_forward = readings.get((others[0], others[1]), 0)
                         ce_reverse = readings.get((others[1], others[0]), 0)
                         if ce_forward > 1.5 or ce_reverse > 1.5:
