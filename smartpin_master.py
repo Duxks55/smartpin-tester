@@ -74,6 +74,17 @@ class SmartPinMasterApp(tk.Tk):
         if len(self.test_logs) > 50: # Cap memory log size
             self.test_logs.pop()
 
+    def restart_application(self):
+        """Restarts the current Python script executable cleanly."""
+        try:
+            python = sys.executable
+            script = os.path.abspath(sys.argv[0])
+            self.destroy()
+            os.execl(python, python, script, *sys.argv[1:])
+        except Exception as e:
+            print(f"Failed to auto-restart: {e}")
+            sys.exit(0)
+
     def run_hardware_transistor_test(self):
         """Shared logic matching the main Transistor Checker UI routine."""
         mux1_pins = [4, 5, 6]
@@ -400,6 +411,7 @@ class MainDashboard(tk.Frame):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run i2cdetect: {e}")
 
+
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
@@ -434,6 +446,7 @@ class TransistorCheckerView(tk.Frame):
             self.after(0, lambda: self.result_box.insert(tk.END, f"\n[Result] {res_text}\n"))
                 
         threading.Thread(target=run_thread, daemon=True).start()
+
 
 class CapacitorAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -470,6 +483,7 @@ class CapacitorAnalyzerView(tk.Frame):
             self.after(0, lambda: self.result_box.insert(tk.END, res_text))
                 
         threading.Thread(target=run_thread, daemon=True).start()
+
 
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
@@ -528,16 +542,22 @@ class SettingsView(tk.Frame):
                 
                 if "Already up to date." in output:
                     msg = "Status: System is already up to date."
+                    self.after(0, lambda: self.update_status_lbl.config(text=msg, fg="#10b981"))
                 else:
-                    msg = "Status: Update pulled successfully! Restart app to apply."
-                
-                self.after(0, lambda: self.update_status_lbl.config(text=msg, fg="#10b981"))
-                self.controller.log_test_result("System Maintenance", "Software update check executed successfully.")
+                    msg = "Status: Update applied! Restarting automatically..."
+                    self.after(0, lambda: self.update_status_lbl.config(text=msg, fg="#10b981"))
+                    self.controller.log_test_result("System Maintenance", "Software updated. Auto-restarting...")
+                    
+                    # Wait 1.5 seconds so the user sees the message, then restart the app process
+                    time.sleep(1.5)
+                    self.after(0, self.controller.restart_application)
+                    
             except Exception as e:
                 err_msg = f"Status: Update failed ({e})"
                 self.after(0, lambda: self.update_status_lbl.config(text=err_msg, fg="#ef4444"))
 
         threading.Thread(target=run_update_thread, daemon=True).start()
+
 
 class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
