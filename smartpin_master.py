@@ -504,8 +504,12 @@ class SettingsView(tk.Frame):
         self.version_lbl = tk.Label(update_card, text=f"Current Running Version: {self.current_version}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.version_lbl.pack(anchor="w", pady=(5, 2))
         
-        self.update_status_lbl = tk.Label(update_card, text="Status: Ready", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
+        self.update_status_lbl = tk.Label(update_card, text="Status: Ready to check for updates", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 10))
+        
+        update_btn = tk.Button(update_card, text="Check & Apply Updates", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                               relief="flat", padx=15, pady=5, command=self.execute_update_process)
+        update_btn.pack(anchor="w")
         
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
         wifi_card.pack(fill="x", pady=10)
@@ -513,6 +517,28 @@ class SettingsView(tk.Frame):
         tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w", pady=(5, 0))
+
+    def execute_update_process(self):
+        self.update_status_lbl.config(text="Status: Checking repository for updates...", fg="#f59e0b")
+        
+        def run_update_thread():
+            try:
+                # Run git pull from the directory containing this script
+                script_dir = os.path.dirname(os.path.abspath(__file__))
+                output = subprocess.check_output(["git", "pull"], cwd=script_dir, stderr=subprocess.STDOUT, text=True)
+                
+                if "Already up to date." in output:
+                    msg = "Status: System is already up to date."
+                else:
+                    msg = "Status: Update pulled successfully! Restart app to apply."
+                
+                self.after(0, lambda: self.update_status_lbl.config(text=msg, fg="#10b981"))
+                self.controller.log_test_result("System Maintenance", "Software update check executed successfully.")
+            except Exception as e:
+                err_msg = f"Status: Update failed ({e})"
+                self.after(0, lambda: self.update_status_lbl.config(text=err_msg, fg="#ef4444"))
+
+        threading.Thread(target=run_update_thread, daemon=True).start()
 
 class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
