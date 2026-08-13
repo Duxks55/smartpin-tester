@@ -128,6 +128,7 @@ class SmartPinMasterApp(tk.Tk):
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
                 
+                # --- NPN CHECK ---
                 for base in [0, 1, 2]:
                     others = [p for p in [0, 1, 2] if p != base]
                     npn_match = True
@@ -152,16 +153,23 @@ class SmartPinMasterApp(tk.Tk):
                         found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                         break
 
+                # --- PNP CHECK (FIXED) ---
                 if not found_type:
                     for base in [0, 1, 2]:
                         others = [p for p in [0, 1, 2] if p != base]
                         pnp_match = True
                         for source_pin in others:
                             v = readings.get((source_pin, base), 0)
-                            if not (0.15 < v < 0.9 or v > 2.5):
+                            if not (0.15 < v < 0.9):
                                 pnp_match = False
                                 break
+                        
                         if pnp_match:
+                            ec_forward = readings.get((others[1], others[0]), 0)
+                            ec_reverse = readings.get((others[0], others[1]), 0)
+                            if ec_reverse > ec_forward and ec_reverse > 1.5:
+                                continue
+
                             v_a = readings.get((others[0], base), 0)
                             v_b = readings.get((others[1], base), 0)
                             if v_a > v_b:
