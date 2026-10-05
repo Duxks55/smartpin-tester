@@ -394,7 +394,7 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- High-Performance Touch Scrollable Dashboard ---
+        # --- Fluid Mobile-Style Scrollable Dashboard ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
@@ -410,37 +410,51 @@ class MainDashboard(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Touch Drag & Threshold Swipe State
+        # Fluid Touch Drag & Inertial Glide State
         self.touch_state = {
             "start_y": 0,
             "last_y": 0,
-            "is_dragging": False
+            "is_dragging": False,
+            "velocity": 0,
+            "last_time": 0,
+            "anim_id": None
         }
 
         def on_touch_press(event):
+            if self.touch_state["anim_id"]:
+                self.after_cancel(self.touch_state["anim_id"])
+                self.touch_state["anim_id"] = None
             self.touch_state["start_y"] = event.y_root
             self.touch_state["last_y"] = event.y_root
+            self.touch_state["velocity"] = 0
+            self.touch_state["last_time"] = time.time()
             self.touch_state["is_dragging"] = False
 
         def on_touch_drag(event):
+            current_time = time.time()
+            dt = current_time - self.touch_state["last_time"]
             dy = event.y_root - self.touch_state["last_y"]
             total_distance = abs(event.y_root - self.touch_state["start_y"])
             
-            # 8-pixel threshold to distinguish tap from drag
-            if total_distance > 8:
+            # 5-pixel threshold to start scrolling vs tapping a button
+            if total_distance > 5:
                 self.touch_state["is_dragging"] = True
 
             if self.touch_state["is_dragging"]:
-                scroll_units = -int(dy / 3)
-                if scroll_units != 0:
-                    self.canvas.yview_scroll(scroll_units, "units")
-                    self.touch_state["last_y"] = event.y_root
+                if dt > 0:
+                    self.touch_state["velocity"] = dy / dt
+                
+                # Directly shift canvas view by the exact pixel delta dragged
+                self.canvas.yview_scroll(int(-dy), "units")
+                self.touch_state["last_y"] = event.y_root
+                self.touch_state["last_time"] = current_time
 
         def on_touch_release(event):
-            pass
+            if self.touch_state["is_dragging"]:
+                self.smooth_momentum_glide()
 
-        self.bind_touch_events(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
-        self.bind_touch_events(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
+        # Bind touch actions globally across all widgets so swiping works anywhere
+        self.bind_global_touch(self, on_touch_press, on_touch_drag, on_touch_release)
         
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
@@ -448,10 +462,9 @@ class MainDashboard(tk.Frame):
             ("LED Blinker Module", "Control and blink LEDs on GPIO 21 & 25", "#f43f5e", lambda: controller.show_frame("LedBlinkerManagerView")),
             ("IoT Dashboard Status", "Open browser telemetry & control hub", "#f59e0b", lambda: self.open_link("http://localhost:5000")),
             ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check),
-            # --- Placeholder / Test Options for Scrolling ---
-            ("Component Library", "Browse electronic part specifications (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Placeholder option clicked!")),
-            ("Pin Mapping Utility", "View GPIO breakout and channel routing (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Placeholder option clicked!")),
-            ("Calibration Assistant", "Run ADC baseline reference checks (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Placeholder option clicked!"))
+            ("Component Library", "Browse electronic part specifications (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Component Library clicked!")),
+            ("Pin Mapping Utility", "View GPIO breakout and channel routing (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Pin Mapping clicked!")),
+            ("Calibration Assistant", "Run ADC baseline reference checks (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Calibration Assistant clicked!"))
         ]
         
         for i, (name, desc, color, cmd) in enumerate(modules):
@@ -477,12 +490,20 @@ class MainDashboard(tk.Frame):
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
-    def bind_touch_events(self, widget, press_cb, drag_cb, release_cb):
+    def smooth_momentum_glide(self):
+        velocity = self.touch_state["velocity"]
+        if abs(velocity) > 30:
+            step = -velocity / 20.0
+            self.canvas.yview_scroll(int(step), "units")
+            self.touch_state["velocity"] *= 0.82
+            self.touch_state["anim_id"] = self.after(20, self.smooth_momentum_glide)
+
+    def bind_global_touch(self, widget, press_cb, drag_cb, release_cb):
         widget.bind("<ButtonPress-1>", press_cb, add="+")
         widget.bind("<B1-Motion>", drag_cb, add="+")
         widget.bind("<ButtonRelease-1>", release_cb, add="+")
         for child in widget.winfo_children():
-            self.bind_touch_events(child, press_cb, drag_cb, release_cb)
+            self.bind_global_touch(child, press_cb, drag_cb, release_cb)
 
     def open_link(self, url):
         import webbrowser
@@ -719,7 +740,7 @@ class SettingsView(tk.Frame):
                 if local_commit != remote_commit:
                     self.after(0, lambda: self.update_status_lbl.config(text="Status: Update found! Applying...", fg="#f59e0b"))
                     
-                    # Force reset to remote main branch (matching your manual SSH flow)
+                    # Force reset to remote main branch
                     subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "origin/main"], check=True, capture_output=True)
                     
                     # Run update script if present
