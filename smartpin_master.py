@@ -394,7 +394,7 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- Fluid Mobile-Style Scrollable Dashboard ---
+        # --- Everywhere-Swipe Mobile-Style Scrollable Dashboard ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
@@ -410,7 +410,7 @@ class MainDashboard(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Fluid Touch Drag & Inertial Glide State
+        # Touch Drag & Inertial Glide State
         self.touch_state = {
             "start_y": 0,
             "last_y": 0,
@@ -436,7 +436,7 @@ class MainDashboard(tk.Frame):
             dy = event.y_root - self.touch_state["last_y"]
             total_distance = abs(event.y_root - self.touch_state["start_y"])
             
-            # 5-pixel threshold to start scrolling vs tapping a button
+            # 5-pixel threshold to distinguish tap from drag
             if total_distance > 5:
                 self.touch_state["is_dragging"] = True
 
@@ -453,8 +453,9 @@ class MainDashboard(tk.Frame):
             if self.touch_state["is_dragging"]:
                 self.smooth_momentum_glide()
 
-        # Bind touch actions globally across all widgets so swiping works anywhere
-        self.bind_global_touch(self, on_touch_press, on_touch_drag, on_touch_release)
+        # Bind touch actions globally across ALL components (canvas, scrollable content, and future cards)
+        self.bind_global_touch(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
+        self.bind_global_touch(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
         
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
@@ -484,8 +485,15 @@ class MainDashboard(tk.Frame):
                 if not self.touch_state["is_dragging"]:
                     action()
 
-            tk.Button(inner, text="Open Module", bg=color, fg="#ffffff", font=("Helvetica", 10, "bold"),
-                      relief="flat", padx=10, pady=5, command=guarded_cmd).pack(anchor="w")
+            btn = tk.Button(inner, text="Open Module", bg=color, fg="#ffffff", font=("Helvetica", 10, "bold"),
+                            relief="flat", padx=10, pady=5, command=guarded_cmd)
+            btn.pack(anchor="w")
+            
+            # Bind touch events directly to card, inner frame, labels, and button so dragging starts anywhere on the tile
+            for el in [card, inner, btn]:
+                el.bind("<ButtonPress-1>", on_touch_press, add="+")
+                el.bind("<B1-Motion>", on_touch_drag, add="+")
+                el.bind("<ButtonRelease-1>", on_touch_release, add="+")
             
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
