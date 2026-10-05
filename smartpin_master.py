@@ -280,6 +280,7 @@ class SmartPinMasterApp(tk.Tk):
                         <body>
                             <div class="container">
                                 <h1>SmartPin Remote IoT Control Dashboard</h1>
+                                .card { background: #1e293b; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
                                 <div class="card">
                                     <h3>Remote Hardware Triggers</h3>
                                     <button onclick="triggerTest('transistor')">Run Transistor Test</button>
@@ -394,7 +395,7 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- Everywhere-Swipe Mobile-Style Scrollable Dashboard ---
+        # --- Buttery-Smooth Inertial Scrollable Dashboard ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
@@ -410,13 +411,13 @@ class MainDashboard(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Touch Drag & Inertial Glide State
+        # High-Precision Inertial Touch Glide State
         self.touch_state = {
             "start_y": 0,
             "last_y": 0,
             "is_dragging": False,
-            "velocity": 0,
-            "last_time": 0,
+            "velocity": 0.0,
+            "last_time": 0.0,
             "anim_id": None
         }
 
@@ -426,7 +427,7 @@ class MainDashboard(tk.Frame):
                 self.touch_state["anim_id"] = None
             self.touch_state["start_y"] = event.y_root
             self.touch_state["last_y"] = event.y_root
-            self.touch_state["velocity"] = 0
+            self.touch_state["velocity"] = 0.0
             self.touch_state["last_time"] = time.time()
             self.touch_state["is_dragging"] = False
 
@@ -436,16 +437,24 @@ class MainDashboard(tk.Frame):
             dy = event.y_root - self.touch_state["last_y"]
             total_distance = abs(event.y_root - self.touch_state["start_y"])
             
-            # 5-pixel threshold to distinguish tap from drag
-            if total_distance > 5:
+            # 4-pixel threshold for instant response without misinterpreting taps
+            if total_distance > 4:
                 self.touch_state["is_dragging"] = True
 
             if self.touch_state["is_dragging"]:
                 if dt > 0:
-                    self.touch_state["velocity"] = dy / dt
+                    # Smooth rolling velocity calculation
+                    instant_vel = dy / dt
+                    self.touch_state["velocity"] = (self.touch_state["velocity"] * 0.4) + (instant_vel * 0.6)
                 
-                # Directly shift canvas view by the exact pixel delta dragged
-                self.canvas.yview_scroll(int(-dy), "units")
+                # Use fractional scrolling for smooth sub-unit movement
+                scroll_fraction = -dy / 180.0
+                try:
+                    self.canvas.yview_scroll(scroll_fraction, "pages")
+                except Exception:
+                    # Fallback to unit scrolling if fractional pages aren't supported by canvas view
+                    self.canvas.yview_scroll(-int(dy / 2), "units")
+
                 self.touch_state["last_y"] = event.y_root
                 self.touch_state["last_time"] = current_time
 
@@ -453,10 +462,6 @@ class MainDashboard(tk.Frame):
             if self.touch_state["is_dragging"]:
                 self.smooth_momentum_glide()
 
-        # Bind touch actions globally across ALL components (canvas, scrollable content, and future cards)
-        self.bind_global_touch(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
-        self.bind_global_touch(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
-        
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
@@ -478,8 +483,11 @@ class MainDashboard(tk.Frame):
             inner = tk.Frame(card, bg="#1e293b", padx=20, pady=20)
             inner.pack(fill="both", expand=True)
             
-            tk.Label(inner, text=name, fg="#ffffff", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(anchor="w")
-            tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10)).pack(anchor="w", pady=(5, 15))
+            lbl_title = tk.Label(inner, text=name, fg="#ffffff", bg="#1e293b", font=("Helvetica", 14, "bold"))
+            lbl_title.pack(anchor="w")
+            
+            lbl_desc = tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10))
+            lbl_desc.pack(anchor="w", pady=(5, 15))
             
             def guarded_cmd(action=cmd):
                 if not self.touch_state["is_dragging"]:
@@ -489,8 +497,8 @@ class MainDashboard(tk.Frame):
                             relief="flat", padx=10, pady=5, command=guarded_cmd)
             btn.pack(anchor="w")
             
-            # Bind touch events directly to card, inner frame, labels, and button so dragging starts anywhere on the tile
-            for el in [card, inner, btn]:
+            # Recursively bind touch drag/swipe events everywhere across cards and components
+            for el in [card, inner, lbl_title, lbl_desc, btn]:
                 el.bind("<ButtonPress-1>", on_touch_press, add="+")
                 el.bind("<B1-Motion>", on_touch_drag, add="+")
                 el.bind("<ButtonRelease-1>", on_touch_release, add="+")
@@ -499,19 +507,19 @@ class MainDashboard(tk.Frame):
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
     def smooth_momentum_glide(self):
+        """Creates a smooth inertial deceleration glide when lifting your finger."""
         velocity = self.touch_state["velocity"]
-        if abs(velocity) > 30:
-            step = -velocity / 20.0
-            self.canvas.yview_scroll(int(step), "units")
-            self.touch_state["velocity"] *= 0.82
-            self.touch_state["anim_id"] = self.after(20, self.smooth_momentum_glide)
-
-    def bind_global_touch(self, widget, press_cb, drag_cb, release_cb):
-        widget.bind("<ButtonPress-1>", press_cb, add="+")
-        widget.bind("<B1-Motion>", drag_cb, add="+")
-        widget.bind("<ButtonRelease-1>", release_cb, add="+")
-        for child in widget.winfo_children():
-            self.bind_global_touch(child, press_cb, drag_cb, release_cb)
+        if abs(velocity) > 15:
+            # Step size based on flick velocity
+            step = -velocity / 35.0
+            try:
+                self.canvas.yview_scroll(step / 10.0, "pages")
+            except Exception:
+                self.canvas.yview_scroll(int(step / 3.0), "units")
+            
+            # Friction / Deceleration factor
+            self.touch_state["velocity"] *= 0.88
+            self.touch_state["anim_id"] = self.after(15, self.smooth_momentum_glide)
 
     def open_link(self, url):
         import webbrowser
