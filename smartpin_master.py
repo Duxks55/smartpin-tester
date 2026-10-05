@@ -431,17 +431,14 @@ class MainDashboard(tk.Frame):
                 self.touch_state["is_dragging"] = True
 
             if self.touch_state["is_dragging"]:
-                # Scroll canvas relative to finger drag delta
                 scroll_units = -int(dy / 3)
                 if scroll_units != 0:
                     self.canvas.yview_scroll(scroll_units, "units")
                     self.touch_state["last_y"] = event.y_root
 
         def on_touch_release(event):
-            # Brief delay before clearing dragging state so button clicks know if it was a swipe
             pass
 
-        # Recursively bind touch events across canvas, frames, labels, and cards
         self.bind_touch_events(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
         self.bind_touch_events(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
         
@@ -470,7 +467,6 @@ class MainDashboard(tk.Frame):
             tk.Label(inner, text=name, fg="#ffffff", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(anchor="w")
             tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10)).pack(anchor="w", pady=(5, 15))
             
-            # Guarded command wrapper so buttons don't fire if the user was swiping
             def guarded_cmd(action=cmd):
                 if not self.touch_state["is_dragging"]:
                     action()
@@ -674,7 +670,7 @@ class SettingsView(tk.Frame):
         tk.Label(net_card, text=f"Hostname: {hostname}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w")
         tk.Label(net_card, text=f"IP Address: {ip_address}", fg="#34d399", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(2, 0))
 
-        # --- Update Card ---
+        # --- Real Git Update Card ---
         update_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
         update_card.pack(fill="x", pady=5)
         
@@ -707,17 +703,41 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("WifiManagerView")).pack(anchor="w", pady=(5, 0))
 
     def trigger_software_update(self):
-        self.update_status_lbl.config(text="Status: Checking for updates...", fg="#f59e0b")
+        self.update_status_lbl.config(text="Status: Checking GitHub for updates...", fg="#f59e0b")
         
         def run_update_thread():
             try:
-                time.sleep(1.5)
-                self.after(0, lambda: self.update_status_lbl.config(text="Status: System is up to date!", fg="#10b981"))
-                messagebox.showinfo("Update Manager", "Software is already running the latest version.")
-                self.controller.log_test_result("System Maintenance", "Software update check completed.")
+                repo_dir = os.path.dirname(os.path.abspath(__file__))
+                
+                # Fetch latest commits from remote origin
+                subprocess.run(["git", "-C", repo_dir, "fetch", "origin"], check=True, capture_output=True)
+                
+                # Get local and remote commit hashes
+                local_commit = subprocess.check_output(["git", "-C", repo_dir, "rev-parse", "HEAD"]).decode().strip()
+                remote_commit = subprocess.check_output(["git", "-C", repo_dir, "rev-parse", "origin/main"]).decode().strip()
+                
+                if local_commit != remote_commit:
+                    self.after(0, lambda: self.update_status_lbl.config(text="Status: Update found! Applying...", fg="#f59e0b"))
+                    
+                    # Force reset to remote main branch (matching your manual SSH flow)
+                    subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "origin/main"], check=True, capture_output=True)
+                    
+                    # Run update script if present
+                    update_script = os.path.join(repo_dir, "update_kiosk.sh")
+                    if os.path.exists(update_script):
+                        subprocess.run(["bash", update_script], check=True, capture_output=True)
+                        
+                    self.after(0, lambda: self.update_status_lbl.config(text="Status: Update applied! Restarting...", fg="#10b981"))
+                    messagebox.showinfo("Update Manager", "Update applied successfully! The application will now restart.")
+                    
+                    # Restart the Python app process
+                    os.execv(sys.executable, [sys.executable] + sys.argv)
+                else:
+                    self.after(0, lambda: self.update_status_lbl.config(text="Status: System is up to date!", fg="#10b981"))
+                    messagebox.showinfo("Update Manager", "Software is already running the latest version from GitHub.")
             except Exception as e:
-                self.after(0, lambda: self.update_status_lbl.config(text="Status: Update failed.", fg="#ef4444"))
-                messagebox.showerror("Update Error", f"Failed to apply update: {e}")
+                self.after(0, lambda: self.update_status_lbl.config(text="Status: Update check failed.", fg="#ef4444"))
+                messagebox.showerror("Update Error", f"Failed to fetch or apply update: {e}")
 
         threading.Thread(target=run_update_thread, daemon=True).start()
 
