@@ -394,7 +394,7 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- Touch & Mouse Scrollable Dashboard (Hidden Scrollbar) ---
+        # --- Smooth Inertial Scrollable Dashboard ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
@@ -410,14 +410,44 @@ class MainDashboard(tk.Frame):
         
         # Make canvas resize dynamically
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
-        
-        # Pack canvas to fill the full width (Scrollbar omitted/hidden)
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Bind mousewheel and touchscreen drag/swipe events
+        # Smooth Touch & Inertial Momentum Scroll State
+        self.drag_data = {"y": 0, "velocity": 0, "last_time": 0, "anim_id": None}
+
+        def on_touch_press(event):
+            # Cancel any ongoing momentum animation when touching the screen again
+            if self.drag_data["anim_id"]:
+                self.after_cancel(self.drag_data["anim_id"])
+                self.drag_data["anim_id"] = None
+            self.drag_data["y"] = event.y_root
+            self.drag_data["velocity"] = 0
+            self.drag_data["last_time"] = time.time()
+
+        def on_touch_drag(event):
+            current_time = time.time()
+            dt = current_time - self.drag_data["last_time"]
+            dy = event.y_root - self.drag_data["y"]
+            
+            if dt > 0:
+                # Calculate smooth velocity for inertia
+                self.drag_data["velocity"] = dy / dt
+            
+            # Directly move the canvas view smoothly
+            fraction = -dy / 50.0  # Scale sensitivity factor
+            self.canvas.yview_scroll(int(fraction * 10), "units")
+            
+            self.drag_data["y"] = event.y_root
+            self.drag_data["last_time"] = current_time
+
+        def on_touch_release(event):
+            # Start smooth inertial glide animation upon release
+            self.smooth_momentum_glide()
+
+        # Bind touch/mouse dragging recursively so swiping works anywhere on cards and buttons
+        self.bind_events_recursive(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
+        self.bind_events_recursive(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
-        self.canvas.bind("<ButtonPress-1>", self._touch_start)
-        self.canvas.bind("<B1-Motion>", self._touch_drag)
         
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
@@ -450,13 +480,23 @@ class MainDashboard(tk.Frame):
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
-    def _touch_start(self, event):
-        """Record initial touch position for finger dragging."""
-        self.canvas.scan_mark(event.x, event.y)
+    def smooth_momentum_glide(self):
+        """Creates a smooth deceleration sliding animation when letting go of the screen."""
+        velocity = self.drag_data["velocity"]
+        if abs(velocity) > 50: # Minimum speed threshold to trigger glide
+            step = -velocity / 30.0
+            self.canvas.yview_scroll(int(step), "units")
+            # Decay velocity smoothly
+            self.drag_data["velocity"] *= 0.85
+            self.drag_data["anim_id"] = self.after(20, self.smooth_momentum_glide)
 
-    def _touch_drag(self, event):
-        """Scroll canvas relative to touch swipe movement."""
-        self.canvas.scan_dragto(event.x, event.y, gain=1)
+    def bind_events_recursive(self, widget, press_cb, drag_cb, release_cb):
+        """Recursively binds touch/drag/release events to a widget and all its children."""
+        widget.bind("<ButtonPress-1>", press_cb, add="+")
+        widget.bind("<B1-Motion>", drag_cb, add="+")
+        widget.bind("<ButtonRelease-1>", release_cb, add="+")
+        for child in widget.winfo_children():
+            self.bind_events_recursive(child, press_cb, drag_cb, release_cb)
 
     def _on_mousewheel(self, event):
         """Scroll canvas with mouse wheel."""
