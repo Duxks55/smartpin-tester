@@ -7,6 +7,7 @@ import time
 import sys
 import urllib.request
 import json
+import socket
 from datetime import datetime
 
 # Set up I2C permissions for non-root users if needed
@@ -101,6 +102,23 @@ class SmartPinMasterApp(tk.Tk):
         self.test_logs.insert(0, log_entry) # Keep newest at the top
         if len(self.test_logs) > 50: # Cap memory log size
             self.test_logs.pop()
+
+    def get_system_network_info(self):
+        """Retrieves current hostname and local IP address."""
+        hostname = socket.gethostname()
+        ip_address = "127.0.0.1"
+        try:
+            # Create a dummy socket connection to determine local routable IP address
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip_address = s.getsockname()[0]
+            s.close()
+        except Exception:
+            try:
+                ip_address = socket.gethostbyname(hostname)
+            except Exception:
+                ip_address = "Unavailable"
+        return hostname, ip_address
 
     def run_hardware_transistor_test(self):
         """Shared logic matching the main Transistor Checker UI routine."""
@@ -411,7 +429,6 @@ class MainDashboard(tk.Frame):
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
             ("LED Blinker Module", "Control and blink LEDs on GPIO 21 & 25", "#f43f5e", lambda: controller.show_frame("LedBlinkerManagerView")),
             ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check)
-            # Add future modules here; they will automatically be scrollable and touch-swipeable!
         ]
         
         for i, (name, desc, color, cmd) in enumerate(modules):
@@ -618,10 +635,22 @@ class SettingsView(tk.Frame):
         tk.Label(header, text="SYSTEM SETTINGS & MAINTENANCE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 16, "bold")).pack(side="left", padx=10)
         
         body = tk.Frame(self, bg="#0f172a")
-        body.pack(fill="both", expand=True, padx=40, pady=30)
+        body.pack(fill="both", expand=True, padx=40, pady=20)
         
-        update_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
-        update_card.pack(fill="x", pady=10)
+        # --- Network Info Card ---
+        net_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
+        net_card.pack(fill="x", pady=5)
+        
+        tk.Label(net_card, text="Device Network Information", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w", pady=(0, 5))
+        
+        hostname, ip_address = self.controller.get_system_network_info()
+        
+        tk.Label(net_card, text=f"Hostname: {hostname}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w")
+        tk.Label(net_card, text=f"IP Address: {ip_address}", fg="#34d399", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(2, 0))
+
+        # --- Update Card ---
+        update_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
+        update_card.pack(fill="x", pady=5)
         
         tk.Label(update_card, text="Software & Firmware Updates", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
@@ -638,13 +667,14 @@ class SettingsView(tk.Frame):
         self.version_lbl.pack(anchor="w", pady=(5, 2))
         
         self.update_status_lbl = tk.Label(update_card, text="Status: Ready", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
-        self.update_status_lbl.pack(anchor="w", pady=(0, 10))
+        self.update_status_lbl.pack(anchor="w", pady=(0, 8))
         
         tk.Button(update_card, text="Check & Apply Update", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=self.trigger_software_update).pack(anchor="w")
         
-        wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=20)
-        wifi_card.pack(fill="x", pady=10)
+        # --- Network Management Card ---
+        wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
+        wifi_card.pack(fill="x", pady=5)
         
         tk.Label(wifi_card, text="Network Management", fg="#ffffff", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         tk.Button(wifi_card, text="Manage Wi-Fi Networks", bg="#475569", fg="#ffffff", font=("Helvetica", 10, "bold"),
