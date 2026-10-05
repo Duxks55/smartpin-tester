@@ -377,22 +377,49 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        content_grid = tk.Frame(self, bg="#0f172a")
-        content_grid.pack(fill="both", expand=True, padx=30, pady=30)
+        # --- Touch & Mouse Scrollable Dashboard Implementation ---
+        container_frame = tk.Frame(self, bg="#0f172a")
+        container_frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        self.canvas = tk.Canvas(container_frame, bg="#0f172a", highlightthickness=0)
+        self.scrollbar = ttk.Scrollbar(container_frame, orient="vertical", command=self.canvas.yview)
+        
+        self.scrollable_content = tk.Frame(self.canvas, bg="#0f172a")
+        
+        self.scrollable_content.bind(
+            "<Configure>",
+            lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all"))
+        )
+        
+        self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_content, anchor="nw")
+        
+        self.canvas.configure(yscrollcommand=self.scrollbar.set)
+        
+        # Make canvas resize dynamically
+        self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
+        
+        self.canvas.pack(side="left", fill="both", expand=True)
+        self.scrollbar.pack(side="right", fill="y")
+        
+        # Bind mousewheel and touchscreen drag/swipe events
+        self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+        self.canvas.bind("<ButtonPress-1>", self._touch_start)
+        self.canvas.bind("<B1-Motion>", self._touch_drag)
         
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
             ("LED Blinker Module", "Control and blink LEDs on GPIO 21 & 25", "#f43f5e", lambda: controller.show_frame("LedBlinkerManagerView")),
             ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check)
+            # Add future modules here; they will automatically be scrollable and touch-swipeable!
         ]
         
         for i, (name, desc, color, cmd) in enumerate(modules):
             row = i // 2
             col = i % 2
             
-            card = tk.Frame(content_grid, bg="#1e293b", highlightbackground=color, highlightthickness=2)
-            card.grid(row=row, column=col, padx=15, pady=15, sticky="nsew")
+            card = tk.Frame(self.scrollable_content, bg="#1e293b", highlightbackground=color, highlightthickness=2)
+            card.grid(row=row, column=col, padx=10, pady=10, sticky="nsew")
             
             inner = tk.Frame(card, bg="#1e293b", padx=20, pady=20)
             inner.pack(fill="both", expand=True)
@@ -403,10 +430,20 @@ class MainDashboard(tk.Frame):
             tk.Button(inner, text="Open Module", bg=color, fg="#ffffff", font=("Helvetica", 10, "bold"),
                       relief="flat", padx=10, pady=5, command=cmd).pack(anchor="w")
             
-        content_grid.grid_rowconfigure(0, weight=1)
-        content_grid.grid_rowconfigure(1, weight=1)
-        content_grid.grid_columnconfigure(0, weight=1)
-        content_grid.grid_columnconfigure(1, weight=1)
+        self.scrollable_content.grid_columnconfigure(0, weight=1)
+        self.scrollable_content.grid_columnconfigure(1, weight=1)
+
+    def _touch_start(self, event):
+        """Record initial touch position for finger dragging."""
+        self.canvas.scan_mark(event.x, event.y)
+
+    def _touch_drag(self, event):
+        """Scroll canvas relative to touch swipe movement."""
+        self.canvas.scan_dragto(event.x, event.y, gain=1)
+
+    def _on_mousewheel(self, event):
+        """Scroll canvas with mouse wheel."""
+        self.canvas.yview_scroll(int(-1*(event.delta/120)), "units")
 
     def open_link(self, url):
         import webbrowser
@@ -511,7 +548,6 @@ class LedBlinkerManagerView(tk.Frame):
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=30, pady=20)
         
-        # Grid layout for GPIO 21 and GPIO 25 controls
         self.create_led_card(body, "LED 1 (GPIO 21)", 21, 0)
         self.create_led_card(body, "LED 2 (GPIO 25)", 25, 1)
 
@@ -527,7 +563,6 @@ class LedBlinkerManagerView(tk.Frame):
         status_lbl.pack(anchor="w", pady=(0, 15))
         card.status_lbl = status_lbl
         
-        # Buttons
         tk.Button(card, text="Turn ON", bg="#10b981", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", width=15, pady=5, command=lambda: self.turn_on(pin, card)).pack(anchor="w", pady=5)
                   
@@ -564,7 +599,7 @@ class LedBlinkerManagerView(tk.Frame):
             while self.blinking_active.get(pin, False):
                 state = not state
                 self.controller.set_led_state(pin, state)
-                time.sleep(0.5) # 0.5s interval blink speed
+                time.sleep(0.5)
 
         threading.Thread(target=blink_loop, daemon=True).start()
 
