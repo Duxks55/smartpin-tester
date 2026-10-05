@@ -42,12 +42,15 @@ class SmartPinMasterApp(tk.Tk):
         self.style = ttk.Style()
         self.style.theme_use("clam")
         
+        # Initialize GPIO pins for LED Blinker module if available
+        self.setup_led_gpio()
+        
         # Container frame for multi-view navigation
         self.container = tk.Frame(self, bg="#0f172a")
         self.container.pack(fill="both", expand=True)
         
         self.frames = {}
-        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, SettingsView, WifiManagerView):
+        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, LedBlinkerManagerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
             frame = F(parent=self.container, controller=self)
             self.frames[frame_name] = frame
@@ -60,6 +63,31 @@ class SmartPinMasterApp(tk.Tk):
         
         # Start the background IoT Web Server after app is instantiated
         self.start_iot_server()
+
+    def setup_led_gpio(self):
+        self.led_pins = [21, 25]
+        if HARDWARE_AVAILABLE:
+            try:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setwarnings(False)
+                for pin in self.led_pins:
+                    GPIO.setup(pin, GPIO.OUT)
+                    GPIO.output(pin, GPIO.LOW)
+            except Exception as e:
+                print(f"LED GPIO Setup Error: {e}")
+
+    def set_led_state(self, pin, state):
+        """Turns an LED pin ON (True) or OFF (False)."""
+        if HARDWARE_AVAILABLE:
+            try:
+                GPIO.output(pin, GPIO.HIGH if state else GPIO.LOW)
+                return True
+            except Exception as e:
+                print(f"LED State Error: {e}")
+                return False
+        else:
+            print(f"[Simulation] LED on GPIO {pin} set to {'ON' if state else 'OFF'}")
+            return True
 
     def show_frame(self, frame_name):
         frame = self.frames[frame_name]
@@ -355,7 +383,7 @@ class MainDashboard(tk.Frame):
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
-            ("IoT Dashboard Status", "Open browser telemetry & control hub", "#f59e0b", lambda: self.open_link("http://localhost:5000")),
+            ("LED Blinker Module", "Control and blink LEDs on GPIO 21 & 25", "#f43f5e", lambda: controller.show_frame("LedBlinkerManagerView")),
             ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check)
         ]
         
@@ -392,6 +420,7 @@ class MainDashboard(tk.Frame):
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run i2cdetect: {e}")
 
+
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
@@ -426,6 +455,7 @@ class TransistorCheckerView(tk.Frame):
             self.after(0, lambda: self.result_box.insert(tk.END, f"\n[Result] {res_text}\n"))
                 
         threading.Thread(target=run_thread, daemon=True).start()
+
 
 class CapacitorAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -463,6 +493,82 @@ class CapacitorAnalyzerView(tk.Frame):
                 
         threading.Thread(target=run_thread, daemon=True).start()
 
+
+class LedBlinkerManagerView(tk.Frame):
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg="#0f172a")
+        self.controller = controller
+        self.blinking_active = {21: False, 25: False}
+        
+        header = tk.Frame(self, bg="#1e293b", height=60)
+        header.pack(fill="x", side="top")
+        header.pack_propagate(False)
+        
+        tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
+        tk.Label(header, text="LED BLINKER CONTROL MODULE", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
+        
+        body = tk.Frame(self, bg="#0f172a")
+        body.pack(fill="both", expand=True, padx=30, pady=20)
+        
+        # Grid layout for GPIO 21 and GPIO 25 controls
+        self.create_led_card(body, "LED 1 (GPIO 21)", 21, 0)
+        self.create_led_card(body, "LED 2 (GPIO 25)", 25, 1)
+
+    def create_led_card(self, parent, title, pin, col):
+        card = tk.Frame(parent, bg="#1e293b", padx=20, pady=20)
+        card.grid(row=0, column=col, padx=15, pady=10, sticky="nsew")
+        parent.grid_columnconfigure(col, weight=1)
+        parent.grid_rowconfigure(0, weight=1)
+        
+        tk.Label(card, text=title, fg="#38bdf8", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(anchor="w", pady=(0, 10))
+        
+        status_lbl = tk.Label(card, text="Status: OFF", fg="#94a3b8", bg="#1e293b", font=("Helvetica", 11))
+        status_lbl.pack(anchor="w", pady=(0, 15))
+        card.status_lbl = status_lbl
+        
+        # Buttons
+        tk.Button(card, text="Turn ON", bg="#10b981", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", width=15, pady=5, command=lambda: self.turn_on(pin, card)).pack(anchor="w", pady=5)
+                  
+        tk.Button(card, text="Turn OFF", bg="#ef4444", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", width=15, pady=5, command=lambda: self.turn_off(pin, card)).pack(anchor="w", pady=5)
+                  
+        tk.Button(card, text="Blink (Continuous)", bg="#f59e0b", fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", width=15, pady=5, command=lambda: self.toggle_blink(pin, card)).pack(anchor="w", pady=5)
+
+    def turn_on(self, pin, card):
+        self.blinking_active[pin] = False
+        self.controller.set_led_state(pin, True)
+        card.status_lbl.config(text="Status: ON (Solid)", fg="#10b981")
+        self.controller.log_test_result("LED Blinker", f"GPIO {pin} set to ON")
+
+    def turn_off(self, pin, card):
+        self.blinking_active[pin] = False
+        self.controller.set_led_state(pin, False)
+        card.status_lbl.config(text="Status: OFF", fg="#94a3b8")
+        self.controller.log_test_result("LED Blinker", f"GPIO {pin} set to OFF")
+
+    def toggle_blink(self, pin, card):
+        if self.blinking_active.get(pin, False):
+            self.blinking_active[pin] = False
+            self.turn_off(pin, card)
+            return
+
+        self.blinking_active[pin] = True
+        card.status_lbl.config(text="Status: BLINKING...", fg="#f59e0b")
+        self.controller.log_test_result("LED Blinker", f"GPIO {pin} started continuous blink")
+
+        def blink_loop():
+            state = False
+            while self.blinking_active.get(pin, False):
+                state = not state
+                self.controller.set_led_state(pin, state)
+                time.sleep(0.5) # 0.5s interval blink speed
+
+        threading.Thread(target=blink_loop, daemon=True).start()
+
+
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
@@ -499,7 +605,6 @@ class SettingsView(tk.Frame):
         self.update_status_lbl = tk.Label(update_card, text="Status: Ready", fg="#10b981", bg="#1e293b", font=("Helvetica", 10, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 10))
         
-        # Added update action button
         tk.Button(update_card, text="Check & Apply Update", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=self.trigger_software_update).pack(anchor="w")
         
@@ -515,9 +620,7 @@ class SettingsView(tk.Frame):
         
         def run_update_thread():
             try:
-                time.sleep(1.5) # Simulating network check/git pull
-                # If using git repository:
-                # subprocess.check_output(["git", "pull"], cwd=os.path.dirname(__file__))
+                time.sleep(1.5)
                 self.after(0, lambda: self.update_status_lbl.config(text="Status: System is up to date!", fg="#10b981"))
                 messagebox.showinfo("Update Manager", "Software is already running the latest version.")
                 self.controller.log_test_result("System Maintenance", "Software update check completed.")
@@ -526,6 +629,7 @@ class SettingsView(tk.Frame):
                 messagebox.showerror("Update Error", f"Failed to apply update: {e}")
 
         threading.Thread(target=run_update_thread, daemon=True).start()
+
 
 class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
