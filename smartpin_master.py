@@ -108,7 +108,6 @@ class SmartPinMasterApp(tk.Tk):
         hostname = socket.gethostname()
         ip_address = "127.0.0.1"
         try:
-            # Create a dummy socket connection to determine local routable IP address
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
             ip_address = s.getsockname()[0]
@@ -395,13 +394,11 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- Touch & Mouse Scrollable Dashboard Implementation ---
+        # --- Touch & Mouse Scrollable Dashboard (Hidden Scrollbar) ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
         self.canvas = tk.Canvas(container_frame, bg="#0f172a", highlightthickness=0)
-        self.scrollbar = ttk.Scrollbar(container_frame, orient="vertical", command=self.canvas.yview)
-        
         self.scrollable_content = tk.Frame(self.canvas, bg="#0f172a")
         
         self.scrollable_content.bind(
@@ -411,13 +408,11 @@ class MainDashboard(tk.Frame):
         
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_content, anchor="nw")
         
-        self.canvas.configure(yscrollcommand=self.scrollbar.set)
-        
         # Make canvas resize dynamically
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         
+        # Pack canvas to fill the full width (Scrollbar omitted/hidden)
         self.canvas.pack(side="left", fill="both", expand=True)
-        self.scrollbar.pack(side="right", fill="y")
         
         # Bind mousewheel and touchscreen drag/swipe events
         self.canvas.bind_all("<MouseWheel>", self._on_mousewheel)
@@ -428,7 +423,12 @@ class MainDashboard(tk.Frame):
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
             ("LED Blinker Module", "Control and blink LEDs on GPIO 21 & 25", "#f43f5e", lambda: controller.show_frame("LedBlinkerManagerView")),
-            ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check)
+            ("IoT Dashboard Status", "Open browser telemetry & control hub", "#f59e0b", lambda: self.open_link("http://localhost:5000")),
+            ("System Diagnostics", "Scan I2C bus address pins (0x48)", "#8b5cf6", self.run_i2c_check),
+            # --- Placeholder / Test Options for Scrolling ---
+            ("Component Library", "Browse electronic part specifications (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Placeholder option clicked!")),
+            ("Pin Mapping Utility", "View GPIO breakout and channel routing (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Placeholder option clicked!")),
+            ("Calibration Assistant", "Run ADC baseline reference checks (Test)", "#64748b", lambda: messagebox.showinfo("Test", "Placeholder option clicked!"))
         ]
         
         for i, (name, desc, color, cmd) in enumerate(modules):
