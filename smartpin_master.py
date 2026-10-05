@@ -394,7 +394,7 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- Robust Touch-Only Scrollable Dashboard ---
+        # --- High-Performance Touch Scrollable Dashboard ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
@@ -407,50 +407,43 @@ class MainDashboard(tk.Frame):
         )
         
         self.canvas_window = self.canvas.create_window((0, 0), window=self.scrollable_content, anchor="nw")
-        
-        # Make canvas resize dynamically
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Touch Drag & Inertial State Tracker
-        self.drag_data = {"start_y": 0, "last_y": 0, "velocity": 0, "last_time": 0, "anim_id": None, "is_dragging": False}
+        # Touch Drag & Threshold Swipe State
+        self.touch_state = {
+            "start_y": 0,
+            "last_y": 0,
+            "is_dragging": False
+        }
 
         def on_touch_press(event):
-            if self.drag_data["anim_id"]:
-                self.after_cancel(self.drag_data["anim_id"])
-                self.drag_data["anim_id"] = None
-            self.drag_data["start_y"] = event.y_root
-            self.drag_data["last_y"] = event.y_root
-            self.drag_data["velocity"] = 0
-            self.drag_data["last_time"] = time.time()
-            self.drag_data["is_dragging"] = False
+            self.touch_state["start_y"] = event.y_root
+            self.touch_state["last_y"] = event.y_root
+            self.touch_state["is_dragging"] = False
 
         def on_touch_drag(event):
-            dy = event.y_root - self.drag_data["last_y"]
-            total_dy = abs(event.y_root - self.drag_data["start_y"])
+            dy = event.y_root - self.touch_state["last_y"]
+            total_distance = abs(event.y_root - self.touch_state["start_y"])
             
-            # If finger moves more than 5 pixels, consider it a drag/scroll gesture
-            if total_dy > 5:
-                self.drag_data["is_dragging"] = True
+            # 8-pixel threshold to distinguish tap from drag
+            if total_distance > 8:
+                self.touch_state["is_dragging"] = True
 
-            if self.drag_data["is_dragging"]:
-                current_time = time.time()
-                dt = current_time - self.drag_data["last_time"]
-                if dt > 0:
-                    self.drag_data["velocity"] = dy / dt
-                
-                # Scroll canvas view directly
-                self.canvas.yview_scroll(int(-dy), "units")
-                self.drag_data["last_y"] = event.y_root
-                self.drag_data["last_time"] = current_time
+            if self.touch_state["is_dragging"]:
+                # Scroll canvas relative to finger drag delta
+                scroll_units = -int(dy / 3)
+                if scroll_units != 0:
+                    self.canvas.yview_scroll(scroll_units, "units")
+                    self.touch_state["last_y"] = event.y_root
 
         def on_touch_release(event):
-            if self.drag_data["is_dragging"]:
-                self.smooth_momentum_glide()
+            # Brief delay before clearing dragging state so button clicks know if it was a swipe
+            pass
 
-        # Bind touch events recursively to canvas, cards, labels, and buttons
-        self.bind_events_recursive(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
-        self.bind_events_recursive(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
+        # Recursively bind touch events across canvas, frames, labels, and cards
+        self.bind_touch_events(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
+        self.bind_touch_events(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
         
         modules = [
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
@@ -477,26 +470,23 @@ class MainDashboard(tk.Frame):
             tk.Label(inner, text=name, fg="#ffffff", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(anchor="w")
             tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10)).pack(anchor="w", pady=(5, 15))
             
+            # Guarded command wrapper so buttons don't fire if the user was swiping
+            def guarded_cmd(action=cmd):
+                if not self.touch_state["is_dragging"]:
+                    action()
+
             tk.Button(inner, text="Open Module", bg=color, fg="#ffffff", font=("Helvetica", 10, "bold"),
-                      relief="flat", padx=10, pady=5, command=cmd).pack(anchor="w")
+                      relief="flat", padx=10, pady=5, command=guarded_cmd).pack(anchor="w")
             
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
-    def smooth_momentum_glide(self):
-        velocity = self.drag_data["velocity"]
-        if abs(velocity) > 30:
-            step = -velocity / 20.0
-            self.canvas.yview_scroll(int(step), "units")
-            self.drag_data["velocity"] *= 0.82
-            self.drag_data["anim_id"] = self.after(20, self.smooth_momentum_glide)
-
-    def bind_events_recursive(self, widget, press_cb, drag_cb, release_cb):
+    def bind_touch_events(self, widget, press_cb, drag_cb, release_cb):
         widget.bind("<ButtonPress-1>", press_cb, add="+")
         widget.bind("<B1-Motion>", drag_cb, add="+")
         widget.bind("<ButtonRelease-1>", release_cb, add="+")
         for child in widget.winfo_children():
-            self.bind_events_recursive(child, press_cb, drag_cb, release_cb)
+            self.bind_touch_events(child, press_cb, drag_cb, release_cb)
 
     def open_link(self, url):
         import webbrowser
