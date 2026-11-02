@@ -280,7 +280,6 @@ class SmartPinMasterApp(tk.Tk):
                         <body>
                             <div class="container">
                                 <h1>SmartPin Remote IoT Control Dashboard</h1>
-                                .card { background: #1e293b; padding: 20px; border-radius: 8px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); }
                                 <div class="card">
                                     <h3>Remote Hardware Triggers</h3>
                                     <button onclick="triggerTest('transistor')">Run Transistor Test</button>
@@ -399,7 +398,8 @@ class MainDashboard(tk.Frame):
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        self.canvas = tk.Canvas(container_frame, bg="#0f172a", highlightthickness=0)
+        # yscrollincrement=1 makes the canvas track exactly 1:1 pixel movement!
+        self.canvas = tk.Canvas(container_frame, bg="#0f172a", highlightthickness=0, yscrollincrement=1)
         self.scrollable_content = tk.Frame(self.canvas, bg="#0f172a")
         
         self.scrollable_content.bind(
@@ -437,25 +437,21 @@ class MainDashboard(tk.Frame):
             dy = event.y_root - self.touch_state["last_y"]
             total_distance = abs(event.y_root - self.touch_state["start_y"])
             
-            # 4-pixel threshold for instant response without misinterpreting taps
-            if total_distance > 4:
+            # 20-pixel threshold safely prevents fat-finger taps from mistakenly registering as a drag
+            if total_distance > 20:
                 self.touch_state["is_dragging"] = True
 
             if self.touch_state["is_dragging"]:
                 if dt > 0:
-                    # Smooth rolling velocity calculation
                     instant_vel = dy / dt
                     self.touch_state["velocity"] = (self.touch_state["velocity"] * 0.4) + (instant_vel * 0.6)
                 
-                # Use fractional scrolling for smooth sub-unit movement
-                scroll_fraction = -dy / 180.0
-                try:
-                    self.canvas.yview_scroll(scroll_fraction, "pages")
-                except Exception:
-                    # Fallback to unit scrolling if fractional pages aren't supported by canvas view
-                    self.canvas.yview_scroll(-int(dy / 2), "units")
-
-                self.touch_state["last_y"] = event.y_root
+                # 1:1 pixel scrolling mapping
+                scroll_pixels = -int(dy)
+                if scroll_pixels != 0:
+                    self.canvas.yview_scroll(scroll_pixels, "units")
+                    # Only update last_y by the amount we successfully applied
+                    self.touch_state["last_y"] += -scroll_pixels 
                 self.touch_state["last_time"] = current_time
 
         def on_touch_release(event):
@@ -509,16 +505,12 @@ class MainDashboard(tk.Frame):
     def smooth_momentum_glide(self):
         """Creates a smooth inertial deceleration glide when lifting your finger."""
         velocity = self.touch_state["velocity"]
-        if abs(velocity) > 15:
-            # Step size based on flick velocity
-            step = -velocity / 35.0
-            try:
-                self.canvas.yview_scroll(step / 10.0, "pages")
-            except Exception:
-                self.canvas.yview_scroll(int(step / 3.0), "units")
+        if abs(velocity) > 10:
+            step = -int(velocity * 0.015)  # Pixels per 15ms frame
+            if step != 0:
+                self.canvas.yview_scroll(step, "units")
             
-            # Friction / Deceleration factor
-            self.touch_state["velocity"] *= 0.88
+            self.touch_state["velocity"] *= 0.88 # Friction
             self.touch_state["anim_id"] = self.after(15, self.smooth_momentum_glide)
 
     def open_link(self, url):
