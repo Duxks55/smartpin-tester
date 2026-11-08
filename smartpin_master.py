@@ -54,7 +54,7 @@ class SmartPinMasterApp(tk.Tk):
         
         self.title("SmartPin Master Suite")
         self.geometry("800x480")  # Optimized for 7-inch touchscreens
-        self.configure(bg="#0f172a") # Modern dark slate background
+        self.configure(bg="#0f172a")  # Modern dark slate background
         
         # Shared test logs list accessible by both GUI and Web Server
         self.test_logs = []
@@ -434,7 +434,7 @@ class MainDashboard(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # Inertial Glide State
+        # High-Precision Inertial Touch Glide State
         self.touch_state = {
             "start_y": 0,
             "last_y": 0,
@@ -502,7 +502,6 @@ class MainDashboard(tk.Frame):
                             relief="flat", padx=10, pady=5, command=cmd)
             btn.pack(anchor="w")
             
-        # Bind the scrolling logic everywhere EXCEPT the buttons
         self.bind_global_touch(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
         self.bind_global_touch(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
             
@@ -644,10 +643,9 @@ class VisionAnalyzerView(tk.Frame):
             from picamera2 import Picamera2
             
             cam = Picamera2()
-            # main stream is the high-res capture; lores stream is the scaled preview
+            # Unified 720p stream: avoids multi-stream ISP crashes, sharp for OCR
             config = cam.create_preview_configuration(
-                main={"size": (2304, 1296), "format": "RGB888"},
-                lores={"size": (640, 480), "format": "RGB888"}
+                main={"size": (1280, 720), "format": "RGB888"}
             )
             cam.configure(config)
             cam.start()
@@ -685,8 +683,7 @@ class VisionAnalyzerView(tk.Frame):
         frame = None
         if self.camera_ready and self.picam2:
             try:
-                # Read from lores stream for smooth 30fps touchscreen display
-                frame = self.picam2.capture_array("lores")
+                frame = self.picam2.capture_array()
             except Exception as e:
                 print(f"Capture error: {e}")
 
@@ -724,25 +721,16 @@ class VisionAnalyzerView(tk.Frame):
                 self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
 
     def trigger_analysis(self):
-        if not self.camera_ready or not self.picam2:
+        if not self.camera_ready or not self.picam2 or self.current_frame is None:
             messagebox.showwarning("Vision Warning", "Camera is not ready yet.")
             return
 
-        self.scan_btn.config(state="disabled", text="Capturing High-Res Frame...")
+        self.scan_btn.config(state="disabled", text="Analyzing Frame...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Capturing 2304x1296 image...\nProcessing OCR & Geometry Analysis...\n")
+        self.results_box.insert("1.0", "Analyzing 720p Frame...\nProcessing OCR & Geometry Analysis...\n")
 
-        def capture_and_process():
-            try:
-                # Capture high-res frame from 'main' stream
-                high_res_frame = self.picam2.capture_array("main")
-            except Exception:
-                high_res_frame = self.current_frame.copy() if self.current_frame is not None else None
-                
-            if high_res_frame is not None:
-                self._run_inference_pipeline(high_res_frame)
-
-        threading.Thread(target=capture_and_process, daemon=True).start()
+        target_frame = self.current_frame.copy()
+        threading.Thread(target=self._run_inference_pipeline, args=(target_frame,), daemon=True).start()
 
     def _estimate_appearance_traits(self, img_rgb):
         """Analyzes shape, aspect ratio, and pins when OCR text is not present."""
@@ -838,7 +826,6 @@ class VisionAnalyzerView(tk.Frame):
             else:
                 output_logs.append("No clear alphanumeric text found.")
                 output_logs.append("\n=== VISUAL PACKAGE TRAITS ===")
-                # Fallback to geometry analysis
                 traits = self._estimate_appearance_traits(frame_rgb)
                 output_logs.append(traits)
                 
