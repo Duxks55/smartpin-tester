@@ -433,7 +433,6 @@ class MainDashboard(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # High-Precision Inertial Touch Glide State
         self.touch_state = {
             "start_y": 0,
             "last_y": 0,
@@ -569,7 +568,7 @@ class VisionAnalyzerView(tk.Frame):
         content.grid_columnconfigure(1, weight=1, uniform="half")
         content.grid_rowconfigure(0, weight=1)
         
-        # Left Panel: Video Feed Box
+        # Left Panel: Clean Video Feed Box (No overlays or reticle boxes)
         video_box = tk.Frame(content, bg="#1e293b", highlightbackground="#06b6d4", highlightthickness=2)
         video_box.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
         
@@ -595,15 +594,14 @@ class VisionAnalyzerView(tk.Frame):
         self.results_box.pack(side="left", fill="both", expand=True)
         scrollbar.config(command=self.results_box.yview)
         
-        # Bind touchscreen finger drag to results box
         self._bind_touch_scroll(self.results_box)
         
-        self.results_box.insert("1.0", "Place component 5-10cm under lens.\nTap 'Macro Focus' if blurry.\nPress 'AI Visual Scan' for identification.\n")
+        self.results_box.insert("1.0", "Place component under lens (~5-10cm).\nEnsure light glints across markings.\nTap 'AI Visual Analysis' below.\n")
         
         btn_frame = tk.Frame(control_box, bg="#1e293b")
         btn_frame.pack(fill="x", side="bottom")
         
-        self.scan_btn = tk.Button(btn_frame, text="✨ AI Visual Analysis (Cloud/Local)", bg="#06b6d4", fg="#ffffff", font=("Helvetica", 11, "bold"),
+        self.scan_btn = tk.Button(btn_frame, text="✨ AI Visual Analysis (High-Accuracy)", bg="#06b6d4", fg="#ffffff", font=("Helvetica", 11, "bold"),
                                   relief="flat", pady=8, command=self.trigger_analysis)
         self.scan_btn.pack(fill="x", pady=2)
         
@@ -612,16 +610,15 @@ class VisionAnalyzerView(tk.Frame):
         focus_btn_row.grid_columnconfigure(0, weight=1)
         focus_btn_row.grid_columnconfigure(1, weight=1)
         
-        self.macro_btn = tk.Button(focus_btn_row, text="🔬 Macro Focus", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
+        self.macro_btn = tk.Button(focus_btn_row, text="🔬 Lock Macro (~7cm)", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
                                    relief="flat", pady=4, command=self.set_macro_focus)
         self.macro_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         
-        self.autofocus_btn = tk.Button(focus_btn_row, text="🎯 Trigger Focus", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
+        self.autofocus_btn = tk.Button(focus_btn_row, text="🎯 Trigger Focus Sweep", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
                                        relief="flat", pady=4, command=self.trigger_autofocus)
         self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
     def _bind_touch_scroll(self, widget):
-        """Allows direct vertical finger dragging to scroll through text on touchscreens."""
         touch_state = {"last_y": 0}
 
         def on_press(e):
@@ -645,7 +642,7 @@ class VisionAnalyzerView(tk.Frame):
         self.camera_ready = False
         self.video_label.config(image="", text="Starting Camera Module 3...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Initializing 1080p Macro Pipeline...\n")
+        self.results_box.insert("1.0", "Initializing 1080p Macro Sensor...\n")
         
         threading.Thread(target=self._start_camera_hardware, daemon=True).start()
         
@@ -672,7 +669,6 @@ class VisionAnalyzerView(tk.Frame):
             from picamera2 import Picamera2
             
             cam = Picamera2()
-            # 1080p stream for high-clarity micro inspection
             config = cam.create_preview_configuration(
                 main={"size": (1920, 1080), "format": "RGB888"}
             )
@@ -682,11 +678,11 @@ class VisionAnalyzerView(tk.Frame):
             time.sleep(0.15)
             try:
                 # AfMode 2: Continuous AF, AfRange 2: Macro (5cm - 30cm)
-                # Sharpness 1.5 boosts fine laser-etched character contrast
+                # Sharpness 1.8: Boosts fine laser-etched contrast
                 cam.set_controls({
                     "AfMode": 2, 
                     "AfRange": 2,
-                    "Sharpness": 1.5
+                    "Sharpness": 1.8
                 })
             except Exception as af_err:
                 print(f"AF notice: {af_err}")
@@ -700,7 +696,7 @@ class VisionAnalyzerView(tk.Frame):
             self.after(0, lambda msg=err_text: self.video_label.config(text=f"Camera Error:\n{msg[:100]}"))
 
     def _on_camera_started(self):
-        self.results_box.insert(tk.END, "Camera active. 1080p Macro AF engaged.\n")
+        self.results_box.insert(tk.END, "Camera active. 1080p continuous macro AF engaged.\n")
         self._render_loop()
 
     def _load_yolo_model(self):
@@ -723,22 +719,8 @@ class VisionAnalyzerView(tk.Frame):
 
         if frame is not None:
             self.current_frame = frame
-            # Superimpose targeting reticle to assist centering component under lens
-            h, w, _ = frame.shape
-            cy, cx = h // 2, w // 2
-            crop_h, crop_w = int(h * 0.45), int(w * 0.45)
-            
-            preview_frame = frame.copy()
-            # Draw corner reticle on preview frame
-            cv2.rectangle(
-                preview_frame,
-                (cx - crop_w // 2, cy - crop_h // 2),
-                (cx + crop_w // 2, cy + crop_h // 2),
-                (6, 182, 212),
-                3
-            )
-            
-            img = Image.fromarray(preview_frame)
+            # Clean preview with no crop box lines
+            img = Image.fromarray(frame)
             img = img.resize((350, 260), Image.Resampling.BILINEAR)
             img_tk = ImageTk.PhotoImage(image=img)
             
@@ -762,7 +744,7 @@ class VisionAnalyzerView(tk.Frame):
         if self.picam2:
             try:
                 self.picam2.set_controls({"AfMode": 2, "AfRange": 2, "AfTrigger": 0})
-                self.results_box.insert(tk.END, "[Focus] Continuous Macro Sweep active.\n")
+                self.results_box.insert(tk.END, "[Focus] Continuous Macro Sweep triggered.\n")
                 self.results_box.see(tk.END)
             except Exception as e:
                 self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
@@ -772,22 +754,16 @@ class VisionAnalyzerView(tk.Frame):
             messagebox.showwarning("Vision Warning", "Camera is not ready yet.")
             return
 
-        self.scan_btn.config(state="disabled", text="✨ Running AI Vision...")
+        self.scan_btn.config(state="disabled", text="✨ High-Accuracy Scanning...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Capturing 1080p high-detail frame...\nApplying macro center crop & contrast filter...\n")
+        self.results_box.insert("1.0", "Capturing uncompressed 1080p full frame...\nConsulting AI Component Analysis Engine...\n")
 
-        # Digital Macro Crop: crop the center 45% of frame where the component sits
-        raw_frame = self.current_frame.copy()
-        h, w, _ = raw_frame.shape
-        cy, cx = h // 2, w // 2
-        crop_h, crop_w = int(h * 0.45), int(w * 0.45)
-        
-        cropped_target = raw_frame[cy - crop_h // 2 : cy + crop_h // 2, cx - crop_w // 2 : cx + crop_w // 2]
-
-        threading.Thread(target=self._run_inference_pipeline, args=(cropped_target,), daemon=True).start()
+        # Capture the entire uncropped 1080p still frame
+        full_frame = self.current_frame.copy()
+        threading.Thread(target=self._run_inference_pipeline, args=(full_frame,), daemon=True).start()
 
     def _query_ai_vision(self, frame_rgb):
-        """Uses Google GenAI SDK if GEMINI_API_KEY is found in environment, else returns None."""
+        """Uses Google GenAI SDK with precision prompt for electronic components."""
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             return None
@@ -803,11 +779,14 @@ class VisionAnalyzerView(tk.Frame):
 
             client = genai.Client(api_key=api_key)
             prompt = (
-                "You are an electronic component identification expert. Inspect this macro camera photo of a component. "
-                "1. Identify the component package/format (e.g. TO-92, TO-220, SOIC-8, DIP-14, SMD resistor, radial capacitor). "
-                "2. Transcribe any laser-etched or printed part markings/numbers visible. "
-                "3. If markings are readable, explain what the component is (e.g., 2N3904 NPN Transistor, 555 Timer, 10uF 50V Capacitor) and list its standard pinout/polarity. "
-                "Keep response clear, structured, and under 150 words."
+                "You are an expert electrical engineer inspecting an electronic component under a macro lens. "
+                "Analyze the entire image and provide an accurate identification report:\n"
+                "1. Package & Physical Type: State the package (e.g. TO-92, TO-220, SOIC-8, DIP-8/14/16, SOT-23, SMD 0805/1206 resistor/cap, axial, etc.) and pin/lead count.\n"
+                "2. Markings / Text Decoded: Transcribe all visible laser-etched, printed, or SMD code markings (including date/lot codes vs actual part numbers). If it is an SMD code (e.g., '1AM', 'A7'), decode the actual part.\n"
+                "3. Verified Component: State the exact part name (e.g., NE555 Timer, LM7805 5V Regulator, 2N3904 NPN BJT, 1N4148 Fast Diode).\n"
+                "4. Pinout & Polarity: Detail standard pin assignment (e.g., Pin 1: Emitter, Pin 2: Base, Pin 3: Collector, or notch/band orientation).\n"
+                "5. Circuit Role: 1 sentence summary of what it does.\n\n"
+                "Be direct, structured, concise, and technical."
             )
             
             response = client.models.generate_content(
@@ -821,7 +800,7 @@ class VisionAnalyzerView(tk.Frame):
 
     def _estimate_appearance_traits(self, img_rgb):
         h, w, _ = img_rgb.shape
-        center_crop = img_rgb[int(h*0.1):int(h*0.9), int(w*0.1):int(w*0.9)]
+        center_crop = img_rgb[int(h*0.15):int(h*0.85), int(w*0.15):int(w*0.85)]
         gray = cv2.cvtColor(center_crop, cv2.COLOR_RGB2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         
@@ -841,46 +820,44 @@ class VisionAnalyzerView(tk.Frame):
 
         description = []
         if is_dark:
-            description.append("Dark molded epoxy body")
+            description.append("Dark epoxy package")
         else:
-            description.append("Light/metallic body")
+            description.append("Metallic/ceramic body")
 
         if aspect_ratio > 2.2 or aspect_ratio < 0.45:
-            description.append("Axial/Cylindrical form (Resistor, Diode, or Radial Cap)")
+            description.append("Axial / cylindrical package")
         elif 0.8 <= aspect_ratio <= 1.25:
-            description.append("Square package (QFN, TQFP, or SMD Inductor)")
+            description.append("Square package (QFN/TQFP/Inductor)")
         else:
-            description.append("Rectangular multi-pin package (DIP / SOIC / SOT)")
+            description.append("Rectangular multi-pin package (DIP/SOIC/SOT)")
 
         hull = cv2.convexHull(c)
         solidity = float(area) / cv2.contourArea(hull) if cv2.contourArea(hull) > 0 else 1.0
         if solidity < 0.75:
-            description.append("Exposed pin leads visible")
+            description.append("Exposed pin leads detected")
 
         return " | ".join(description)
 
     def _run_inference_pipeline(self, frame_rgb):
         output_logs = []
         try:
-            # Check Cloud Vision API first
+            # 1. Primary AI Vision Inspection (Full-Frame Reasoning)
             ai_result = self._query_ai_vision(frame_rgb)
             if ai_result:
-                output_logs.append("=== AI VISION ANALYSIS ===")
+                output_logs.append("=== AI COMPONENT IDENTIFICATION ===")
                 output_logs.append(ai_result.strip())
             else:
-                # Enhanced Multi-Exposure Local OCR Fallback
+                # 2. Local Fallback OCR & Geometry
                 import pytesseract
                 
                 gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-                clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+                clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8, 8))
                 contrast_boost = clahe.apply(gray)
                 
                 kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
                 sharpened = cv2.filter2D(contrast_boost, -1, kernel)
                 
-                # Pass 1: Standard Adaptive Threshold
                 thresh1 = cv2.adaptiveThreshold(sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 3)
-                # Pass 2: Inverted Threshold (captures faint white laser text on dark packages)
                 thresh2 = cv2.bitwise_not(thresh1)
                 
                 ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
@@ -888,7 +865,6 @@ class VisionAnalyzerView(tk.Frame):
                 text1 = pytesseract.image_to_string(thresh1, config=ocr_config).strip()
                 text2 = pytesseract.image_to_string(thresh2, config=ocr_config).strip()
                 combined_lines = list(set([l.strip() for l in (text1 + "\n" + text2).split("\n") if len(l.strip()) >= 3]))
-                
                 valid_part_lines = [l for l in combined_lines if sum(1 for c in l if c.isalnum()) >= 3]
 
                 detections = []
@@ -913,10 +889,10 @@ class VisionAnalyzerView(tk.Frame):
                     output_logs.append("\n=== VISUAL PACKAGE TRAITS ===")
                     output_logs.append(self._estimate_appearance_traits(frame_rgb))
                     
-                output_logs.append("\n[Notice] Set GEMINI_API_KEY in ~/.env to enable cloud AI identification & pinout lookup.")
+                output_logs.append("\n[Notice] Ensure GEMINI_API_KEY is present in ~/smartpin-tester/.env for AI component analysis.")
 
             report_text = "\n".join(output_logs)
-            self.controller.log_test_result("Optical Identifier", "Scan completed")
+            self.controller.log_test_result("Optical Identifier", "High-accuracy scan completed")
 
         except Exception as e:
             report_text = f"Inference Error:\n{e}"
@@ -924,7 +900,7 @@ class VisionAnalyzerView(tk.Frame):
         def update_gui():
             self.results_box.delete("1.0", tk.END)
             self.results_box.insert("1.0", report_text)
-            self.scan_btn.config(state="normal", text="✨ AI Visual Analysis (Cloud/Local)")
+            self.scan_btn.config(state="normal", text="✨ AI Visual Analysis (High-Accuracy)")
 
         self.after(0, update_gui)
 
