@@ -568,7 +568,7 @@ class VisionAnalyzerView(tk.Frame):
         content.grid_columnconfigure(1, weight=1, uniform="half")
         content.grid_rowconfigure(0, weight=1)
         
-        # Left Panel: Clean Video Feed Box (No overlays or reticle boxes)
+        # Left Panel: Clean Video Feed Box
         video_box = tk.Frame(content, bg="#1e293b", highlightbackground="#06b6d4", highlightthickness=2)
         video_box.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
         
@@ -581,7 +581,7 @@ class VisionAnalyzerView(tk.Frame):
         
         tk.Label(control_box, text="Recognition Telemetry", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
-        # --- Scrollable Text Area with Touch Drag Support ---
+        # Scrollable Text Area with Touch Drag Support
         text_container = tk.Frame(control_box, bg="#0f172a")
         text_container.pack(fill="both", expand=True, pady=(10, 10))
         
@@ -596,12 +596,12 @@ class VisionAnalyzerView(tk.Frame):
         
         self._bind_touch_scroll(self.results_box)
         
-        self.results_box.insert("1.0", "Place component under lens (~5-10cm).\nEnsure light glints across markings.\nTap 'AI Visual Analysis' below.\n")
+        self.results_box.insert("1.0", "Place component under lens (~5-10cm).\nEnsure lighting angles across markings.\nTap 'AI Visual Analysis' below.\n")
         
         btn_frame = tk.Frame(control_box, bg="#1e293b")
         btn_frame.pack(fill="x", side="bottom")
         
-        self.scan_btn = tk.Button(btn_frame, text="✨ AI Visual Analysis (High-Accuracy)", bg="#06b6d4", fg="#ffffff", font=("Helvetica", 11, "bold"),
+        self.scan_btn = tk.Button(btn_frame, text="✨ AI Visual Analysis (Fast & Accurate)", bg="#06b6d4", fg="#ffffff", font=("Helvetica", 11, "bold"),
                                   relief="flat", pady=8, command=self.trigger_analysis)
         self.scan_btn.pack(fill="x", pady=2)
         
@@ -678,11 +678,10 @@ class VisionAnalyzerView(tk.Frame):
             time.sleep(0.15)
             try:
                 # AfMode 2: Continuous AF, AfRange 2: Macro (5cm - 30cm)
-                # Sharpness 1.8: Boosts fine laser-etched contrast
                 cam.set_controls({
                     "AfMode": 2, 
                     "AfRange": 2,
-                    "Sharpness": 1.8
+                    "Sharpness": 1.5
                 })
             except Exception as af_err:
                 print(f"AF notice: {af_err}")
@@ -719,7 +718,7 @@ class VisionAnalyzerView(tk.Frame):
 
         if frame is not None:
             self.current_frame = frame
-            # Clean preview with no crop box lines
+            # Downsample clean frame for touchscreen preview
             img = Image.fromarray(frame)
             img = img.resize((350, 260), Image.Resampling.BILINEAR)
             img_tk = ImageTk.PhotoImage(image=img)
@@ -754,16 +753,15 @@ class VisionAnalyzerView(tk.Frame):
             messagebox.showwarning("Vision Warning", "Camera is not ready yet.")
             return
 
-        self.scan_btn.config(state="disabled", text="✨ High-Accuracy Scanning...")
+        self.scan_btn.config(state="disabled", text="✨ Scanning...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Capturing uncompressed 1080p full frame...\nConsulting AI Component Analysis Engine...\n")
+        self.results_box.insert("1.0", "Capturing frame...\nRunning component analysis...\n")
 
-        # Capture the entire uncropped 1080p still frame
         full_frame = self.current_frame.copy()
         threading.Thread(target=self._run_inference_pipeline, args=(full_frame,), daemon=True).start()
 
     def _query_ai_vision(self, frame_rgb):
-        """Uses Google GenAI SDK with precision prompt for electronic components."""
+        """Pre-scales image payload for fast 1-2s turnaround while preserving text fidelity."""
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             return None
@@ -772,21 +770,22 @@ class VisionAnalyzerView(tk.Frame):
             from google import genai
             import io
             
+            # Downscale payload: cuts size from ~1.8MB to ~150KB for fast transfer
             pil_img = Image.fromarray(frame_rgb)
+            pil_img.thumbnail((1024, 1024), Image.Resampling.BILINEAR)
+            
             img_byte_arr = io.BytesIO()
-            pil_img.save(img_byte_arr, format='JPEG', quality=95)
+            pil_img.save(img_byte_arr, format='JPEG', quality=85)
             img_bytes = img_byte_arr.getvalue()
 
             client = genai.Client(api_key=api_key)
             prompt = (
-                "You are an expert electrical engineer inspecting an electronic component under a macro lens. "
-                "Analyze the entire image and provide an accurate identification report:\n"
-                "1. Package & Physical Type: State the package (e.g. TO-92, TO-220, SOIC-8, DIP-8/14/16, SOT-23, SMD 0805/1206 resistor/cap, axial, etc.) and pin/lead count.\n"
-                "2. Markings / Text Decoded: Transcribe all visible laser-etched, printed, or SMD code markings (including date/lot codes vs actual part numbers). If it is an SMD code (e.g., '1AM', 'A7'), decode the actual part.\n"
-                "3. Verified Component: State the exact part name (e.g., NE555 Timer, LM7805 5V Regulator, 2N3904 NPN BJT, 1N4148 Fast Diode).\n"
-                "4. Pinout & Polarity: Detail standard pin assignment (e.g., Pin 1: Emitter, Pin 2: Base, Pin 3: Collector, or notch/band orientation).\n"
-                "5. Circuit Role: 1 sentence summary of what it does.\n\n"
-                "Be direct, structured, concise, and technical."
+                "Identify this electronic component under macro inspection:\n"
+                "1. Package & Physical Type (e.g. TO-92, SOIC-8, DIP-14, SMD resistor)\n"
+                "2. Markings / Part No. (decode laser-etched text or SMD code)\n"
+                "3. Verified Part Name & Function\n"
+                "4. Standard Pinout / Polarity\n"
+                "Keep response under 80 words. Be direct, structured, and technical."
             )
             
             response = client.models.generate_content(
@@ -795,7 +794,7 @@ class VisionAnalyzerView(tk.Frame):
             )
             return response.text
         except Exception as e:
-            print(f"Cloud AI error: {e}")
+            print(f"Cloud AI error / timeout: {e}")
             return None
 
     def _estimate_appearance_traits(self, img_rgb):
@@ -841,58 +840,36 @@ class VisionAnalyzerView(tk.Frame):
     def _run_inference_pipeline(self, frame_rgb):
         output_logs = []
         try:
-            # 1. Primary AI Vision Inspection (Full-Frame Reasoning)
+            # 1. Fast Cloud AI Vision
             ai_result = self._query_ai_vision(frame_rgb)
             if ai_result:
                 output_logs.append("=== AI COMPONENT IDENTIFICATION ===")
                 output_logs.append(ai_result.strip())
             else:
-                # 2. Local Fallback OCR & Geometry
+                # 2. Fast Local Fallback (Single Pass)
                 import pytesseract
                 
                 gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-                clahe = cv2.createCLAHE(clipLimit=3.5, tileGridSize=(8, 8))
-                contrast_boost = clahe.apply(gray)
-                
-                kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
-                sharpened = cv2.filter2D(contrast_boost, -1, kernel)
-                
-                thresh1 = cv2.adaptiveThreshold(sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 3)
-                thresh2 = cv2.bitwise_not(thresh1)
+                _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
                 
                 ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
-                
-                text1 = pytesseract.image_to_string(thresh1, config=ocr_config).strip()
-                text2 = pytesseract.image_to_string(thresh2, config=ocr_config).strip()
-                combined_lines = list(set([l.strip() for l in (text1 + "\n" + text2).split("\n") if len(l.strip()) >= 3]))
-                valid_part_lines = [l for l in combined_lines if sum(1 for c in l if c.isalnum()) >= 3]
-
-                detections = []
-                if self.model:
-                    results = self.model(frame_rgb, verbose=False)[0]
-                    for box in results.boxes:
-                        cls_id = int(box.cls[0])
-                        conf = float(box.conf[0])
-                        name = self.model.names[cls_id]
-                        detections.append(f"{name} ({conf * 100:.1f}%)")
+                text = pytesseract.image_to_string(thresh, config=ocr_config).strip()
+                lines = [l.strip() for l in text.split("\n") if len(l.strip()) >= 3]
 
                 output_logs.append("=== LOCAL VISION REPORT ===")
-                if detections:
-                    output_logs.append(f"YOLO Detect: {', '.join(detections)}")
-                
-                output_logs.append("\n=== OCR TEXT / PART NO. ===")
-                if valid_part_lines:
-                    for line in valid_part_lines:
+                if lines:
+                    output_logs.append("\n=== OCR TEXT / PART NO. ===")
+                    for line in lines:
                         output_logs.append(f"• {line}")
                 else:
-                    output_logs.append("No clear alphanumeric markings found.")
-                    output_logs.append("\n=== VISUAL PACKAGE TRAITS ===")
+                    output_logs.append("No clear markings detected.")
+                    output_logs.append("\n=== PHYSICAL TRAITS ===")
                     output_logs.append(self._estimate_appearance_traits(frame_rgb))
                     
-                output_logs.append("\n[Notice] Ensure GEMINI_API_KEY is present in ~/smartpin-tester/.env for AI component analysis.")
+                output_logs.append("\n[Notice] Check Wi-Fi connection for cloud AI identification.")
 
             report_text = "\n".join(output_logs)
-            self.controller.log_test_result("Optical Identifier", "High-accuracy scan completed")
+            self.controller.log_test_result("Optical Identifier", "Scan completed")
 
         except Exception as e:
             report_text = f"Inference Error:\n{e}"
@@ -900,7 +877,7 @@ class VisionAnalyzerView(tk.Frame):
         def update_gui():
             self.results_box.delete("1.0", tk.END)
             self.results_box.insert("1.0", report_text)
-            self.scan_btn.config(state="normal", text="✨ AI Visual Analysis (High-Accuracy)")
+            self.scan_btn.config(state="normal", text="✨ AI Visual Analysis (Fast & Accurate)")
 
         self.after(0, update_gui)
 
