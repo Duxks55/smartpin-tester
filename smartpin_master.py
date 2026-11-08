@@ -542,13 +542,12 @@ class MainDashboard(tk.Frame):
 
 
 class VisionAnalyzerView(tk.Frame):
-    """Camera Module 3 AI Component Identifier & OCR View."""
+    """Camera Module 3 AI Component Identifier & High-Res Macro OCR View."""
     def __init__(self, parent, controller):
         super().__init__(parent, bg="#0f172a")
         self.controller = controller
         
         self.picam2 = None
-        self.cap = None
         self.model = None
         self.is_streaming = False
         self.camera_ready = False
@@ -564,7 +563,7 @@ class VisionAnalyzerView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.exit_to_menu).pack(side="left", padx=20)
         tk.Label(header, text="OPTICAL COMPONENT IDENTIFIER (PI CAM 3)", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
         
-        # Content frame with locked 50/50 split
+        # Content frame with locked 50/50 layout
         content = tk.Frame(self, bg="#0f172a", padx=15, pady=10)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
@@ -586,7 +585,7 @@ class VisionAnalyzerView(tk.Frame):
         
         self.results_box = tk.Text(control_box, bg="#0f172a", fg="#f8fafc", font=("Courier", 10), width=32, height=12, bd=0, relief="flat", wrap="word")
         self.results_box.pack(fill="both", expand=True, pady=(10, 10))
-        self.results_box.insert("1.0", "Align component under Pi Cam 3 lens.\nEnsure good lighting on markings.\n\nPress 'Analyze / Scan Component' below.\n")
+        self.results_box.insert("1.0", "Place component 5-10cm under lens.\nTap 'Macro Focus' if blurry.\nPress 'Analyze' for high-res scan.\n")
         
         btn_frame = tk.Frame(control_box, bg="#1e293b")
         btn_frame.pack(fill="x", side="bottom")
@@ -595,9 +594,18 @@ class VisionAnalyzerView(tk.Frame):
                                   relief="flat", pady=8, command=self.trigger_analysis)
         self.scan_btn.pack(fill="x", pady=2)
         
-        self.autofocus_btn = tk.Button(btn_frame, text="🎯 Trigger Focus", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
+        focus_btn_row = tk.Frame(btn_frame, bg="#1e293b")
+        focus_btn_row.pack(fill="x", pady=2)
+        focus_btn_row.grid_columnconfigure(0, weight=1)
+        focus_btn_row.grid_columnconfigure(1, weight=1)
+        
+        self.macro_btn = tk.Button(focus_btn_row, text="🔬 Macro Focus", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
+                                   relief="flat", pady=4, command=self.set_macro_focus)
+        self.macro_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        
+        self.autofocus_btn = tk.Button(focus_btn_row, text="🎯 Trigger Focus", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
                                        relief="flat", pady=4, command=self.trigger_autofocus)
-        self.autofocus_btn.pack(fill="x", pady=2)
+        self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
     def exit_to_menu(self):
         self.on_hide()
@@ -608,7 +616,7 @@ class VisionAnalyzerView(tk.Frame):
         self.camera_ready = False
         self.video_label.config(image="", text="Starting Camera Module 3...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Initializing sensor pipeline...\n")
+        self.results_box.insert("1.0", "Initializing Macro Camera Pipeline...\n")
         
         threading.Thread(target=self._start_camera_hardware, daemon=True).start()
         
@@ -629,43 +637,37 @@ class VisionAnalyzerView(tk.Frame):
             except Exception as e:
                 print(f"Picamera2 cleanup warning: {e}")
             self.picam2 = None
-            
-        if self.cap:
-            try:
-                self.cap.release()
-            except Exception:
-                pass
-            self.cap = None
 
     def _start_camera_hardware(self):
         try:
             from picamera2 import Picamera2
             
             cam = Picamera2()
-            config = cam.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
+            # Dual streams: lo-res for 30fps screen preview, hi-res for crystal-clear analysis
+            config = cam.create_preview_configuration(
+                main={"size": (640, 480), "format": "RGB888"},
+                lores={"size": (2304, 1296), "format": "RGB888"}
+            )
             cam.configure(config)
             cam.start()
             
-            # Allow driver buffers to settle before applying controls
             time.sleep(0.15)
             try:
-                cam.set_controls({"AfMode": 2})
+                # AfMode: 2 (Continuous AF), AfRange: 2 (Macro Range: 5cm to 30cm)
+                cam.set_controls({"AfMode": 2, "AfRange": 2})
             except Exception as af_err:
                 print(f"AF notice: {af_err}")
             
             self.picam2 = cam
             self.camera_ready = True
-            
-            # Safely initiate UI updates on the main thread
             self.after(0, self._on_camera_started)
-            return
         except Exception as e:
             err_text = str(e)
             print(f"Picamera2 init failure: {err_text}")
             self.after(0, lambda msg=err_text: self.video_label.config(text=f"Camera Error:\n{msg[:100]}"))
 
     def _on_camera_started(self):
-        self.results_box.insert(tk.END, "Camera active. Live stream running.\n")
+        self.results_box.insert(tk.END, "Camera active. Macro AF engaged.\n")
         self._render_loop()
 
     def _load_yolo_model(self):
@@ -682,7 +684,7 @@ class VisionAnalyzerView(tk.Frame):
         frame = None
         if self.camera_ready and self.picam2:
             try:
-                frame = self.picam2.capture_array()
+                frame = self.picam2.capture_array("main")
             except Exception as e:
                 print(f"Capture error: {e}")
 
@@ -698,26 +700,93 @@ class VisionAnalyzerView(tk.Frame):
         if self.is_streaming:
             self.loop_id = self.after(33, self._render_loop)
 
-    def trigger_autofocus(self):
+    def set_macro_focus(self):
+        """Forces lens into ultra-close focus distance (around 5-8 cm)."""
         if self.picam2:
             try:
-                self.picam2.set_controls({"AfTrigger": 0})
-                self.results_box.insert(tk.END, "[Focus] Sweep triggered.\n")
+                # AfMode 0 (Manual), LensPosition ~8.0-10.0 diopters (macro)
+                self.picam2.set_controls({"AfMode": 0, "LensPosition": 8.5})
+                self.results_box.insert(tk.END, "[Focus] Locked to Macro Close-Up (~7cm).\n")
+                self.results_box.see(tk.END)
+            except Exception as e:
+                self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
+
+    def trigger_autofocus(self):
+        """Re-enables continuous macro autofocus and triggers a focus sweep."""
+        if self.picam2:
+            try:
+                self.picam2.set_controls({"AfMode": 2, "AfRange": 2, "AfTrigger": 0})
+                self.results_box.insert(tk.END, "[Focus] Continuous Macro Sweep active.\n")
                 self.results_box.see(tk.END)
             except Exception as e:
                 self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
 
     def trigger_analysis(self):
-        if self.current_frame is None:
-            messagebox.showwarning("Vision Warning", "No valid camera frame captured yet.")
+        if not self.camera_ready or not self.picam2:
+            messagebox.showwarning("Vision Warning", "Camera is not ready yet.")
             return
 
-        self.scan_btn.config(state="disabled", text="Processing Vision Model...")
+        self.scan_btn.config(state="disabled", text="Capturing High-Res Frame...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Analyzing frame...\nRunning YOLOv8 & OCR detection...\n")
+        self.results_box.insert("1.0", "Capturing 2304x1296 image...\nProcessing OCR & Geometry Analysis...\n")
 
-        target_frame = self.current_frame.copy()
-        threading.Thread(target=self._run_inference_pipeline, args=(target_frame,), daemon=True).start()
+        def capture_and_process():
+            try:
+                # Capture high-res frame from 'lores' stream
+                high_res_frame = self.picam2.capture_array("lores")
+            except Exception:
+                high_res_frame = self.current_frame.copy() if self.current_frame is not None else None
+                
+            if high_res_frame is not None:
+                self._run_inference_pipeline(high_res_frame)
+
+        threading.Thread(target=capture_and_process, daemon=True).start()
+
+    def _estimate_appearance_traits(self, img_rgb):
+        """Analyzes shape, aspect ratio, and pins when OCR text is not present."""
+        import cv2
+        import numpy as np
+
+        h, w, _ = img_rgb.shape
+        # Focus on center 60% of frame where the component is placed
+        center_crop = img_rgb[int(h*0.2):int(h*0.8), int(w*0.2):int(w*0.8)]
+        gray = cv2.cvtColor(center_crop, cv2.COLOR_RGB2GRAY)
+        blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+        
+        _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+        contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        
+        if not contours:
+            return "Indeterminate: No distinct component outline detected."
+
+        c = max(contours, key=cv2.contourArea)
+        x, y, cw, ch = cv2.boundingRect(c)
+        aspect_ratio = float(cw) / ch if ch != 0 else 1.0
+        area = cv2.contourArea(c)
+
+        # Average color in center
+        mean_val = cv2.mean(center_crop[y:y+ch, x:x+cw])[:3]
+        is_dark = (mean_val[0] + mean_val[1] + mean_val[2]) / 3 < 85
+
+        description = []
+        if is_dark:
+            description.append("Dark molded epoxy body")
+        else:
+            description.append("Metallic or ceramic light body")
+
+        if aspect_ratio > 2.2 or aspect_ratio < 0.45:
+            description.append("Cylindrical/Axial form factor (Resistor, Diode, or Radial Cap)")
+        elif 0.8 <= aspect_ratio <= 1.25:
+            description.append("Square package (QFN, TQFP, or SMD Inductor)")
+        else:
+            description.append("Rectangular dual-row package (DIP / SOIC / SOT)")
+
+        hull = cv2.convexHull(c)
+        solidity = float(area) / cv2.contourArea(hull) if cv2.contourArea(hull) > 0 else 1.0
+        if solidity < 0.75:
+            description.append("Visible exposed metal leads/pins detected")
+
+        return " | ".join(description)
 
     def _run_inference_pipeline(self, frame_rgb):
         output_logs = []
@@ -725,14 +794,29 @@ class VisionAnalyzerView(tk.Frame):
             import cv2
             import pytesseract
             
+            # --- 1. Multi-Stage High-Contrast OCR ---
             gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-            blurred = cv2.GaussianBlur(gray, (3, 3), 0)
-            thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+            contrast_boost = clahe.apply(gray)
+            
+            # Sharp filter for laser markings
+            kernel = np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]])
+            sharpened = cv2.filter2D(contrast_boost, -1, kernel)
+            
+            thresh = cv2.adaptiveThreshold(sharpened, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 3)
             
             ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
             extracted_text = pytesseract.image_to_string(thresh, config=ocr_config).strip()
-            lines = [line.strip() for line in extracted_text.split("\n") if len(line.strip()) >= 2]
-            
+            lines = [line.strip() for line in extracted_text.split("\n") if len(line.strip()) >= 3]
+
+            # Filter out non-alphanumeric noise
+            valid_part_lines = []
+            for line in lines:
+                alnum_count = sum(1 for ch in line if ch.isalnum())
+                if alnum_count >= 3:
+                    valid_part_lines.append(line)
+
+            # --- 2. YOLO Package Classifier ---
             detections = []
             if self.model:
                 results = self.model(frame_rgb, verbose=False)[0]
@@ -744,19 +828,21 @@ class VisionAnalyzerView(tk.Frame):
 
             output_logs.append("=== IDENTIFICATION REPORT ===")
             if detections:
-                output_logs.append(f"Visual Package: {', '.join(detections)}\n")
-            else:
-                output_logs.append("Visual Package: Unclassified / Standard SMD/DIP\n")
-                
-            output_logs.append("=== OCR TEXT / PART NO. ===")
-            if lines:
-                for line in lines:
+                output_logs.append(f"YOLO Detect: {', '.join(detections)}")
+            
+            output_logs.append("\n=== OCR TEXT / PART NO. ===")
+            if valid_part_lines:
+                for line in valid_part_lines:
                     output_logs.append(f"• {line}")
             else:
-                output_logs.append("No clear markings detected.")
+                output_logs.append("No clear alphanumeric text found.")
+                output_logs.append("\n=== VISUAL PACKAGE TRAITS ===")
+                # Fallback to geometry analysis
+                traits = self._estimate_appearance_traits(frame_rgb)
+                output_logs.append(traits)
                 
             report_text = "\n".join(output_logs)
-            self.controller.log_test_result("Optical Identifier", f"Visual: {len(detections)} parts, OCR: {len(lines)} lines")
+            self.controller.log_test_result("Optical Identifier", f"Visual: {len(detections)} parts, OCR: {len(valid_part_lines)} lines")
 
         except Exception as e:
             report_text = f"Inference Error:\n{e}"
