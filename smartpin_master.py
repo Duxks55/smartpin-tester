@@ -9,6 +9,7 @@ import urllib.request
 import json
 import socket
 from datetime import datetime
+from PIL import Image, ImageTk
 
 # Set up I2C permissions for non-root users if needed
 try:
@@ -16,7 +17,7 @@ try:
 except Exception:
     pass
 
-# Attempt to load hardware libraries gracefully
+# Hardware libraries (GPIO, ADC)
 try:
     import board
     import busio
@@ -27,6 +28,23 @@ try:
 except (ImportError, NotImplementedError) as e:
     print(f"Hardware initialization note: {e}")
     HARDWARE_AVAILABLE = False
+
+# Computer Vision & Machine Learning libraries
+try:
+    import cv2
+    import pytesseract
+    from ultralytics import YOLO
+    CV_AVAILABLE = True
+except ImportError as e:
+    print(f"Vision package note: {e}")
+    CV_AVAILABLE = False
+
+# Picamera2 backend for Camera Module 3
+try:
+    from picamera2 import Picamera2
+    PICAM2_AVAILABLE = True
+except ImportError:
+    PICAM2_AVAILABLE = False
 
 
 class SmartPinMasterApp(tk.Tk):
@@ -51,7 +69,8 @@ class SmartPinMasterApp(tk.Tk):
         self.container.pack(fill="both", expand=True)
         
         self.frames = {}
-        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, LedBlinkerManagerView, SettingsView, WifiManagerView):
+        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, 
+                  LedBlinkerManagerView, VisionAnalyzerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
             frame = F(parent=self.container, controller=self)
             self.frames[frame_name] = frame
@@ -62,7 +81,7 @@ class SmartPinMasterApp(tk.Tk):
         
         self.show_frame("MainDashboard")
         
-        # Start the background IoT Web Server after app is instantiated
+        # Start background IoT Web Server
         self.start_iot_server()
 
     def setup_led_gpio(self):
@@ -91,16 +110,21 @@ class SmartPinMasterApp(tk.Tk):
             return True
 
     def show_frame(self, frame_name):
-        frame = self.frames[frame_name]
-        frame.tkraise()
-        if hasattr(frame, "on_show"):
-            frame.on_show()
+        # Stop camera streams on views being navigated away from
+        for name, frame in self.frames.items():
+            if name != frame_name and hasattr(frame, "on_hide"):
+                frame.on_hide()
+                
+        target_frame = self.frames[frame_name]
+        target_frame.tkraise()
+        if hasattr(target_frame, "on_show"):
+            target_frame.on_show()
 
     def log_test_result(self, module_name, details):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = {"time": timestamp, "module": module_name, "details": details}
-        self.test_logs.insert(0, log_entry) # Keep newest at the top
-        if len(self.test_logs) > 50: # Cap memory log size
+        self.test_logs.insert(0, log_entry)
+        if len(self.test_logs) > 50:
             self.test_logs.pop()
 
     def get_system_network_info(self):
@@ -120,7 +144,6 @@ class SmartPinMasterApp(tk.Tk):
         return hostname, ip_address
 
     def run_hardware_transistor_test(self):
-        """Shared logic matching the main Transistor Checker UI routine."""
         mux1_pins = [4, 5, 6]
         mux2_pins = [7, 8, 9]
         
@@ -370,7 +393,7 @@ class SmartPinMasterApp(tk.Tk):
                         self.wfile.write(b"Not Found")
                         
                 def log_message(self, format, *args):
-                    pass # Suppress console logs
+                    pass
 
             server = HTTPServer(('0.0.0.0', 5000), IoTHandler)
             threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -394,11 +417,10 @@ class MainDashboard(tk.Frame):
                                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("SettingsView"))
         settings_btn.pack(side="right", padx=20)
         
-        # --- Buttery-Smooth Inertial Scrollable Dashboard ---
+        # --- Smooth Scrollable Dashboard Container ---
         container_frame = tk.Frame(self, bg="#0f172a")
         container_frame.pack(fill="both", expand=True, padx=20, pady=20)
         
-        # yscrollincrement=1 makes the canvas track exactly 1:1 pixel movement!
         self.canvas = tk.Canvas(container_frame, bg="#0f172a", highlightthickness=0, yscrollincrement=1)
         self.scrollable_content = tk.Frame(self.canvas, bg="#0f172a")
         
@@ -411,11 +433,10 @@ class MainDashboard(tk.Frame):
         self.canvas.bind('<Configure>', lambda event: self.canvas.itemconfig(self.canvas_window, width=event.width))
         self.canvas.pack(side="left", fill="both", expand=True)
         
-        # High-Precision Inertial Touch Glide State
+        # Inertial Glide State
         self.touch_state = {
             "start_y": 0,
             "last_y": 0,
-            "is_dragging": False,
             "velocity": 0.0,
             "last_time": 0.0,
             "anim_id": None
@@ -429,36 +450,27 @@ class MainDashboard(tk.Frame):
             self.touch_state["last_y"] = event.y_root
             self.touch_state["velocity"] = 0.0
             self.touch_state["last_time"] = time.time()
-            self.touch_state["is_dragging"] = False
 
         def on_touch_drag(event):
             current_time = time.time()
             dt = current_time - self.touch_state["last_time"]
             dy = event.y_root - self.touch_state["last_y"]
-            total_distance = abs(event.y_root - self.touch_state["start_y"])
             
-            # 20-pixel threshold safely prevents fat-finger taps from mistakenly registering as a drag
-            if total_distance > 20:
-                self.touch_state["is_dragging"] = True
-
-            if self.touch_state["is_dragging"]:
-                if dt > 0:
-                    instant_vel = dy / dt
-                    self.touch_state["velocity"] = (self.touch_state["velocity"] * 0.4) + (instant_vel * 0.6)
-                
-                # 1:1 pixel scrolling mapping
-                scroll_pixels = -int(dy)
-                if scroll_pixels != 0:
-                    self.canvas.yview_scroll(scroll_pixels, "units")
-                    # Only update last_y by the amount we successfully applied
-                    self.touch_state["last_y"] += -scroll_pixels 
-                self.touch_state["last_time"] = current_time
+            if dt > 0:
+                instant_vel = dy / dt
+                self.touch_state["velocity"] = (self.touch_state["velocity"] * 0.4) + (instant_vel * 0.6)
+            
+            scroll_pixels = -int(dy)
+            if scroll_pixels != 0:
+                self.canvas.yview_scroll(scroll_pixels, "units")
+                self.touch_state["last_y"] += -scroll_pixels 
+            self.touch_state["last_time"] = current_time
 
         def on_touch_release(event):
-            if self.touch_state["is_dragging"]:
-                self.smooth_momentum_glide()
+            self.smooth_momentum_glide()
 
         modules = [
+            ("Optical Identifier", "Camera Module 3 AI object detection & OCR", "#06b6d4", lambda: controller.show_frame("VisionAnalyzerView")),
             ("Transistor Checker", "Test NPN/PNP BJTs & MOSFET characteristics", "#3b82f6", lambda: controller.show_frame("TransistorCheckerView")),
             ("Capacitor Analyzer", "Measure Capacitance, ESR & Discharge rates", "#10b981", lambda: controller.show_frame("CapacitorAnalyzerView")),
             ("LED Blinker Module", "Control and blink LEDs on GPIO 21 & 25", "#f43f5e", lambda: controller.show_frame("LedBlinkerManagerView")),
@@ -485,33 +497,36 @@ class MainDashboard(tk.Frame):
             lbl_desc = tk.Label(inner, text=desc, fg="#94a3b8", bg="#1e293b", font=("Helvetica", 10))
             lbl_desc.pack(anchor="w", pady=(5, 15))
             
-            def guarded_cmd(action=cmd):
-                if not self.touch_state["is_dragging"]:
-                    action()
-
             btn = tk.Button(inner, text="Open Module", bg=color, fg="#ffffff", font=("Helvetica", 10, "bold"),
-                            relief="flat", padx=10, pady=5, command=guarded_cmd)
+                            relief="flat", padx=10, pady=5, command=cmd)
             btn.pack(anchor="w")
             
-            # Recursively bind touch drag/swipe events everywhere across cards and components
-            for el in [card, inner, lbl_title, lbl_desc, btn]:
-                el.bind("<ButtonPress-1>", on_touch_press, add="+")
-                el.bind("<B1-Motion>", on_touch_drag, add="+")
-                el.bind("<ButtonRelease-1>", on_touch_release, add="+")
+        # Bind the scrolling logic everywhere EXCEPT the buttons
+        self.bind_global_touch(self.canvas, on_touch_press, on_touch_drag, on_touch_release)
+        self.bind_global_touch(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
             
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
     def smooth_momentum_glide(self):
-        """Creates a smooth inertial deceleration glide when lifting your finger."""
         velocity = self.touch_state["velocity"]
         if abs(velocity) > 10:
-            step = -int(velocity * 0.015)  # Pixels per 15ms frame
+            step = -int(velocity * 0.015)
             if step != 0:
                 self.canvas.yview_scroll(step, "units")
             
-            self.touch_state["velocity"] *= 0.88 # Friction
+            self.touch_state["velocity"] *= 0.88
             self.touch_state["anim_id"] = self.after(15, self.smooth_momentum_glide)
+
+    def bind_global_touch(self, widget, press_cb, drag_cb, release_cb):
+        if isinstance(widget, tk.Button):
+            return
+            
+        widget.bind("<ButtonPress-1>", press_cb, add="+")
+        widget.bind("<B1-Motion>", drag_cb, add="+")
+        widget.bind("<ButtonRelease-1>", release_cb, add="+")
+        for child in widget.winfo_children():
+            self.bind_global_touch(child, press_cb, drag_cb, release_cb)
 
     def open_link(self, url):
         import webbrowser
@@ -524,6 +539,226 @@ class MainDashboard(tk.Frame):
             self.controller.log_test_result("System Diagnostics", "Manual I2C Scan Executed")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to run i2cdetect: {e}")
+
+
+class VisionAnalyzerView(tk.Frame):
+    """Camera Module 3 AI Component Identifier & OCR View."""
+    def __init__(self, parent, controller):
+        super().__init__(parent, bg="#0f172a")
+        self.controller = controller
+        
+        self.picam2 = None
+        self.cap = None
+        self.model = None
+        self.is_streaming = False
+        self.latest_frame = None
+        
+        # Header
+        header = tk.Frame(self, bg="#1e293b", height=60)
+        header.pack(fill="x", side="top")
+        header.pack_propagate(False)
+        
+        tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
+        tk.Label(header, text="OPTICAL COMPONENT IDENTIFIER (PI CAM 3)", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
+        
+        # Main Layout: 2 Columns (Left: Video Canvas, Right: Analysis Results)
+        content = tk.Frame(self, bg="#0f172a", padx=15, pady=10)
+        content.pack(fill="both", expand=True)
+        content.grid_columnconfigure(0, weight=1)
+        content.grid_columnconfigure(1, weight=1)
+        content.grid_rowconfigure(0, weight=1)
+        
+        # Left Panel: Video Feed Box
+        video_box = tk.Frame(content, bg="#1e293b", highlightbackground="#06b6d4", highlightthickness=2)
+        video_box.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
+        
+        self.video_label = tk.Label(video_box, text="Initializing Camera Stream...", bg="#0f172a", fg="#94a3b8")
+        self.video_label.pack(fill="both", expand=True, padx=5, pady=5)
+        
+        # Right Panel: Output & Controls
+        control_box = tk.Frame(content, bg="#1e293b", padx=15, pady=15)
+        control_box.grid(row=0, column=1, sticky="nsew", padx=10, pady=5)
+        
+        tk.Label(control_box, text="Recognition Telemetry", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
+        
+        self.results_box = tk.Text(control_box, bg="#0f172a", fg="#f8fafc", font=("Courier", 10), height=14, bd=0, relief="flat", wrap="word")
+        self.results_box.pack(fill="both", expand=True, pady=(10, 10))
+        self.results_box.insert("1.0", "Align component under Pi Cam 3 lens.\nEnsure good lighting on markings.\n\nPress 'Analyze / Scan Component' below.\n")
+        
+        btn_frame = tk.Frame(control_box, bg="#1e293b")
+        btn_frame.pack(fill="x", side="bottom")
+        
+        self.scan_btn = tk.Button(btn_frame, text="🔍 Analyze / Scan Component", bg="#06b6d4", fg="#ffffff", font=("Helvetica", 11, "bold"),
+                                  relief="flat", pady=8, command=self.trigger_analysis)
+        self.scan_btn.pack(fill="x", pady=2)
+        
+        self.autofocus_btn = tk.Button(btn_frame, text="🎯 Trigger Focus", bg="#334155", fg="#ffffff", font=("Helvetica", 9, "bold"),
+                                       relief="flat", pady=4, command=self.trigger_autofocus)
+        self.autofocus_btn.pack(fill="x", pady=2)
+
+    def on_show(self):
+        """Called automatically when entering this frame."""
+        self.is_streaming = True
+        self.results_box.delete("1.0", tk.END)
+        self.results_box.insert("1.0", "Camera active. Continuous auto-focus engaged.\nAlign part in view.\n")
+        
+        # Start camera hardware stream in background
+        threading.Thread(target=self._init_camera_backend, daemon=True).start()
+        
+        # Load YOLO model asynchronously if not already loaded
+        if self.model is None and CV_AVAILABLE:
+            threading.Thread(target=self._load_yolo_model, daemon=True).start()
+
+    def on_hide(self):
+        """Called automatically when leaving this frame to conserve resources."""
+        self.is_streaming = False
+        if self.picam2:
+            try:
+                self.picam2.stop()
+                self.picam2.close()
+            except Exception:
+                pass
+            self.picam2 = None
+        if self.cap:
+            try:
+                self.cap.release()
+            except Exception:
+                pass
+            self.cap = None
+
+    def _init_camera_backend(self):
+        if PICAM2_AVAILABLE:
+            try:
+                self.picam2 = Picamera2()
+                config = self.picam2.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
+                self.picam2.configure(config)
+                self.picam2.start()
+                # Continuous Auto-Focus (AfMode 2) for Camera Module 3
+                self.picam2.set_controls({"AfMode": 2})
+                self._update_stream_loop()
+                return
+            except Exception as e:
+                print(f"Picamera2 init error, attempting OpenCV fallback: {e}")
+                self.picam2 = None
+
+        if CV_AVAILABLE:
+            try:
+                self.cap = cv2.VideoCapture(0)
+                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                self._update_stream_loop()
+            except Exception as e:
+                self.video_label.config(text=f"Camera Error: {e}")
+
+    def _load_yolo_model(self):
+        try:
+            self.model = YOLO("yolov8n.pt")
+        except Exception as e:
+            print(f"Error loading YOLO weights: {e}")
+
+    def _update_stream_loop(self):
+        if not self.is_streaming:
+            return
+
+        frame = None
+        if self.picam2:
+            try:
+                frame = self.picam2.capture_array()  # Already RGB888
+            except Exception:
+                pass
+        elif self.cap and self.cap.isOpened():
+            ret, bgr_frame = self.cap.read()
+            if ret:
+                frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+
+        if frame is not None:
+            self.latest_frame = frame
+            # Scale down for smooth 7-inch UI preview display (approx 360x270)
+            preview_img = Image.fromarray(frame)
+            preview_img = preview_img.resize((360, 270), Image.Resampling.BILINEAR)
+            img_tk = ImageTk.PhotoImage(image=preview_img)
+            
+            self.video_label.img_tk = img_tk
+            self.video_label.configure(image=img_tk, text="")
+
+        # Poll video feed at ~25 FPS
+        if self.is_streaming:
+            self.after(40, self._update_stream_loop)
+
+    def trigger_autofocus(self):
+        """Forces an instantaneous one-shot autofocus cycle on Camera Module 3."""
+        if self.picam2:
+            try:
+                self.picam2.set_controls({"AfTrigger": 0})
+                self.results_box.insert(tk.END, "[Hardware] Autofocus cycle triggered.\n")
+                self.results_box.see(tk.END)
+            except Exception as e:
+                self.results_box.insert(tk.END, f"[Hardware Error] AF trigger: {e}\n")
+
+    def trigger_analysis(self):
+        if self.latest_frame is None:
+            messagebox.showwarning("Vision Warning", "No valid camera frame captured yet.")
+            return
+
+        self.scan_btn.config(state="disabled", text="Processing Vision Model...")
+        self.results_box.delete("1.0", tk.END)
+        self.results_box.insert("1.0", "Capturing high-res frame...\nExecuting YOLOv8 Component Identification...\nRunning Tesseract OCR...\n")
+
+        # Run detection in background thread so GUI never hangs
+        target_frame = self.latest_frame.copy()
+        threading.Thread(target=self._run_inference_pipeline, args=(target_frame,), daemon=True).start()
+
+    def _run_inference_pipeline(self, frame_rgb):
+        output_logs = []
+        try:
+            # 1. OCR Preprocessing on the full frame
+            gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+            # High-contrast adaptive thresholding for laser-etched/printed IC part numbers
+            blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+            thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+            
+            ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
+            extracted_text = pytesseract.image_to_string(thresh, config=ocr_config).strip()
+            
+            # Clean OCR output
+            lines = [line.strip() for line in extracted_text.split("\n") if len(line.strip()) >= 2]
+            
+            # 2. YOLO Object Classification / Bounding Boxes
+            detections = []
+            if self.model:
+                results = self.model(frame_rgb, verbose=False)[0]
+                for box in results.boxes:
+                    cls_id = int(box.cls[0])
+                    conf = float(box.conf[0])
+                    name = self.model.names[cls_id]
+                    detections.append(f"{name} ({conf * 100:.1f}%)")
+
+            output_logs.append("=== IDENTIFICATION REPORT ===\n")
+            if detections:
+                output_logs.append(f"Visual Type: {', '.join(detections)}\n")
+            else:
+                output_logs.append("Visual Type: Unclassified Package (Generic)\n")
+                
+            output_logs.append("\n=== OCR TEXT / PART NO. ===")
+            if lines:
+                for line in lines:
+                    output_logs.append(f"• {line}")
+            else:
+                output_logs.append("No distinct alphanumeric markings detected.")
+                
+            report_text = "\n".join(output_logs)
+            self.controller.log_test_result("Optical Identifier", f"Visual: {len(detections)} parts, OCR: {len(lines)} lines")
+
+        except Exception as e:
+            report_text = f"Inference Pipeline Error:\n{e}"
+
+        def update_gui():
+            self.results_box.delete("1.0", tk.END)
+            self.results_box.insert("1.0", report_text)
+            self.scan_btn.config(state="normal", text="🔍 Analyze / Scan Component")
+
+        self.after(0, update_gui)
 
 
 class TransistorCheckerView(tk.Frame):
@@ -688,7 +923,7 @@ class SettingsView(tk.Frame):
         body = tk.Frame(self, bg="#0f172a")
         body.pack(fill="both", expand=True, padx=40, pady=20)
         
-        # --- Network Info Card ---
+        # Network Info Card
         net_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
         net_card.pack(fill="x", pady=5)
         
@@ -699,7 +934,7 @@ class SettingsView(tk.Frame):
         tk.Label(net_card, text=f"Hostname: {hostname}", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w")
         tk.Label(net_card, text=f"IP Address: {ip_address}", fg="#34d399", bg="#1e293b", font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(2, 0))
 
-        # --- Real Git Update Card ---
+        # Git Update Card
         update_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
         update_card.pack(fill="x", pady=5)
         
@@ -723,7 +958,7 @@ class SettingsView(tk.Frame):
         tk.Button(update_card, text="Check & Apply Update", bg="#3b82f6", fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=15, pady=5, command=self.trigger_software_update).pack(anchor="w")
         
-        # --- Network Management Card ---
+        # Network Management Card
         wifi_card = tk.Frame(body, bg="#1e293b", padx=20, pady=15)
         wifi_card.pack(fill="x", pady=5)
         
@@ -737,29 +972,21 @@ class SettingsView(tk.Frame):
         def run_update_thread():
             try:
                 repo_dir = os.path.dirname(os.path.abspath(__file__))
-                
-                # Fetch latest commits from remote origin
                 subprocess.run(["git", "-C", repo_dir, "fetch", "origin"], check=True, capture_output=True)
                 
-                # Get local and remote commit hashes
                 local_commit = subprocess.check_output(["git", "-C", repo_dir, "rev-parse", "HEAD"]).decode().strip()
                 remote_commit = subprocess.check_output(["git", "-C", repo_dir, "rev-parse", "origin/main"]).decode().strip()
                 
                 if local_commit != remote_commit:
                     self.after(0, lambda: self.update_status_lbl.config(text="Status: Update found! Applying...", fg="#f59e0b"))
-                    
-                    # Force reset to remote main branch
                     subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "origin/main"], check=True, capture_output=True)
                     
-                    # Run update script if present
                     update_script = os.path.join(repo_dir, "update_kiosk.sh")
                     if os.path.exists(update_script):
                         subprocess.run(["bash", update_script], check=True, capture_output=True)
                         
                     self.after(0, lambda: self.update_status_lbl.config(text="Status: Update applied! Restarting...", fg="#10b981"))
                     messagebox.showinfo("Update Manager", "Update applied successfully! The application will now restart.")
-                    
-                    # Restart the Python app process
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 else:
                     self.after(0, lambda: self.update_status_lbl.config(text="Status: System is up to date!", fg="#10b981"))
