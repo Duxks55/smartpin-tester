@@ -10,6 +10,7 @@ import json
 import socket
 from datetime import datetime
 from PIL import Image, ImageTk
+import numpy as np
 
 # Set up I2C permissions for non-root users if needed
 try:
@@ -563,7 +564,7 @@ class VisionAnalyzerView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.exit_to_menu).pack(side="left", padx=20)
         tk.Label(header, text="OPTICAL COMPONENT IDENTIFIER (PI CAM 3)", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
         
-        # Content frame with locked 50/50 layout
+        # Content frame with locked 50/50 split
         content = tk.Frame(self, bg="#0f172a", padx=15, pady=10)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
@@ -643,17 +644,17 @@ class VisionAnalyzerView(tk.Frame):
             from picamera2 import Picamera2
             
             cam = Picamera2()
-            # Dual streams: lo-res for 30fps screen preview, hi-res for crystal-clear analysis
+            # main stream is the high-res capture; lores stream is the scaled preview
             config = cam.create_preview_configuration(
-                main={"size": (640, 480), "format": "RGB888"},
-                lores={"size": (2304, 1296), "format": "RGB888"}
+                main={"size": (2304, 1296), "format": "RGB888"},
+                lores={"size": (640, 480), "format": "RGB888"}
             )
             cam.configure(config)
             cam.start()
             
             time.sleep(0.15)
             try:
-                # AfMode: 2 (Continuous AF), AfRange: 2 (Macro Range: 5cm to 30cm)
+                # AfMode: 2 (Continuous AF), AfRange: 2 (Macro Range: ~5cm-30cm)
                 cam.set_controls({"AfMode": 2, "AfRange": 2})
             except Exception as af_err:
                 print(f"AF notice: {af_err}")
@@ -684,7 +685,8 @@ class VisionAnalyzerView(tk.Frame):
         frame = None
         if self.camera_ready and self.picam2:
             try:
-                frame = self.picam2.capture_array("main")
+                # Read from lores stream for smooth 30fps touchscreen display
+                frame = self.picam2.capture_array("lores")
             except Exception as e:
                 print(f"Capture error: {e}")
 
@@ -704,7 +706,7 @@ class VisionAnalyzerView(tk.Frame):
         """Forces lens into ultra-close focus distance (around 5-8 cm)."""
         if self.picam2:
             try:
-                # AfMode 0 (Manual), LensPosition ~8.0-10.0 diopters (macro)
+                # AfMode 0 (Manual), LensPosition ~8.5 diopters (macro)
                 self.picam2.set_controls({"AfMode": 0, "LensPosition": 8.5})
                 self.results_box.insert(tk.END, "[Focus] Locked to Macro Close-Up (~7cm).\n")
                 self.results_box.see(tk.END)
@@ -732,8 +734,8 @@ class VisionAnalyzerView(tk.Frame):
 
         def capture_and_process():
             try:
-                # Capture high-res frame from 'lores' stream
-                high_res_frame = self.picam2.capture_array("lores")
+                # Capture high-res frame from 'main' stream
+                high_res_frame = self.picam2.capture_array("main")
             except Exception:
                 high_res_frame = self.current_frame.copy() if self.current_frame is not None else None
                 
@@ -745,7 +747,6 @@ class VisionAnalyzerView(tk.Frame):
     def _estimate_appearance_traits(self, img_rgb):
         """Analyzes shape, aspect ratio, and pins when OCR text is not present."""
         import cv2
-        import numpy as np
 
         h, w, _ = img_rgb.shape
         # Focus on center 60% of frame where the component is placed
@@ -853,6 +854,7 @@ class VisionAnalyzerView(tk.Frame):
             self.scan_btn.config(state="normal", text="🔍 Analyze / Scan Component")
 
         self.after(0, update_gui)
+
 
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
