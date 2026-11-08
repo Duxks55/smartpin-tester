@@ -551,7 +551,9 @@ class VisionAnalyzerView(tk.Frame):
         self.cap = None
         self.model = None
         self.is_streaming = False
-        self.latest_frame = None
+        self.camera_ready = False
+        self.current_frame = None
+        self.loop_id = None
         
         # Header
         header = tk.Frame(self, bg="#1e293b", height=60)
@@ -559,21 +561,21 @@ class VisionAnalyzerView(tk.Frame):
         header.pack_propagate(False)
         
         tk.Button(header, text="← Return to Menu", bg="#334155", fg="#f8fafc", font=("Helvetica", 10, "bold"),
-                  relief="flat", padx=15, pady=5, command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=20)
+                  relief="flat", padx=15, pady=5, command=self.exit_to_menu).pack(side="left", padx=20)
         tk.Label(header, text="OPTICAL COMPONENT IDENTIFIER (PI CAM 3)", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
         
-        # Main Layout: 2 Columns (Left: Video Canvas, Right: Analysis Results)
+        # Content frame with locked 50/50 split (uniform="half")
         content = tk.Frame(self, bg="#0f172a", padx=15, pady=10)
         content.pack(fill="both", expand=True)
-        content.grid_columnconfigure(0, weight=1)
-        content.grid_columnconfigure(1, weight=1)
+        content.grid_columnconfigure(0, weight=1, uniform="half")
+        content.grid_columnconfigure(1, weight=1, uniform="half")
         content.grid_rowconfigure(0, weight=1)
         
         # Left Panel: Video Feed Box
         video_box = tk.Frame(content, bg="#1e293b", highlightbackground="#06b6d4", highlightthickness=2)
         video_box.grid(row=0, column=0, sticky="nsew", padx=10, pady=5)
         
-        self.video_label = tk.Label(video_box, text="Initializing Camera Stream...", bg="#0f172a", fg="#94a3b8")
+        self.video_label = tk.Label(video_box, text="Connecting Camera Module 3...", bg="#0f172a", fg="#38bdf8", font=("Helvetica", 11))
         self.video_label.pack(fill="both", expand=True, padx=5, pady=5)
         
         # Right Panel: Output & Controls
@@ -582,7 +584,8 @@ class VisionAnalyzerView(tk.Frame):
         
         tk.Label(control_box, text="Recognition Telemetry", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
-        self.results_box = tk.Text(control_box, bg="#0f172a", fg="#f8fafc", font=("Courier", 10), height=14, bd=0, relief="flat", wrap="word")
+        # Constrained width so text doesn't push the video feed off screen
+        self.results_box = tk.Text(control_box, bg="#0f172a", fg="#f8fafc", font=("Courier", 10), width=32, height=12, bd=0, relief="flat", wrap="word")
         self.results_box.pack(fill="both", expand=True, pady=(10, 10))
         self.results_box.insert("1.0", "Align component under Pi Cam 3 lens.\nEnsure good lighting on markings.\n\nPress 'Analyze / Scan Component' below.\n")
         
@@ -597,22 +600,34 @@ class VisionAnalyzerView(tk.Frame):
                                        relief="flat", pady=4, command=self.trigger_autofocus)
         self.autofocus_btn.pack(fill="x", pady=2)
 
+    def exit_to_menu(self):
+        self.on_hide()
+        self.controller.show_frame("MainDashboard")
+
     def on_show(self):
-        """Called automatically when entering this frame."""
         self.is_streaming = True
+        self.camera_ready = False
+        self.video_label.config(image="", text="Starting Camera Module 3...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Camera active. Continuous auto-focus engaged.\nAlign part in view.\n")
+        self.results_box.insert("1.0", "Initializing sensor pipeline...\n")
         
-        # Start camera hardware stream in background
-        threading.Thread(target=self._init_camera_backend, daemon=True).start()
+        # Spin up camera hardware in background thread
+        threading.Thread(target=self._start_camera_hardware, daemon=True).start()
         
-        # Load YOLO model asynchronously if not already loaded
+        # Start the main-thread UI render loop
+        self._render_loop()
+        
+        # Pre-load YOLO in background if not ready
         if self.model is None and CV_AVAILABLE:
             threading.Thread(target=self._load_yolo_model, daemon=True).start()
 
     def on_hide(self):
-        """Called automatically when leaving this frame to conserve resources."""
         self.is_streaming = False
+        self.camera_ready = False
+        if self.loop_id:
+            self.after_cancel(self.loop_id)
+            self.loop_id = None
+            
         if self.picam2:
             try:
                 self.picam2.stop()
@@ -620,6 +635,7 @@ class VisionAnalyzerView(tk.Frame):
             except Exception:
                 pass
             self.picam2 = None
+            
         if self.cap:
             try:
                 self.cap.release()
@@ -627,104 +643,113 @@ class VisionAnalyzerView(tk.Frame):
                 pass
             self.cap = None
 
-    def _init_camera_backend(self):
-        if PICAM2_AVAILABLE:
+    def _start_camera_hardware(self):
+        """Initializes Picamera2 hardware off the main UI thread."""
+        try:
+            from picamera2 import Picamera2
+            cam = Picamera2()
+            config = cam.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
+            cam.configure(config)
+            cam.start()
             try:
-                self.picam2 = Picamera2()
-                config = self.picam2.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
-                self.picam2.configure(config)
-                self.picam2.start()
-                # Continuous Auto-Focus (AfMode 2) for Camera Module 3
-                self.picam2.set_controls({"AfMode": 2})
-                self._update_stream_loop()
-                return
-            except Exception as e:
-                print(f"Picamera2 init error, attempting OpenCV fallback: {e}")
-                self.picam2 = None
+                cam.set_controls({"AfMode": 2})  # Continuous autofocus
+            except Exception:
+                pass
+            self.picam2 = cam
+            self.camera_ready = True
+            self.after(0, lambda: self.results_box.insert(tk.END, "Camera active. Autofocus locked.\n"))
+            return
+        except Exception as e:
+            print(f"Picamera2 init error: {e}")
 
-        if CV_AVAILABLE:
-            try:
-                self.cap = cv2.VideoCapture(0)
-                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                self._update_stream_loop()
-            except Exception as e:
-                self.video_label.config(text=f"Camera Error: {e}")
+        # Fallback to OpenCV VideoCapture
+        try:
+            import cv2
+            cap = cv2.VideoCapture(0)
+            if cap.isOpened():
+                self.cap = cap
+                self.camera_ready = True
+                return
+        except Exception:
+            pass
+
+        self.after(0, lambda: self.video_label.config(text="Camera Failed to Start.\nCheck ribbon cable."))
 
     def _load_yolo_model(self):
         try:
+            from ultralytics import YOLO
             self.model = YOLO("yolov8n.pt")
         except Exception as e:
-            print(f"Error loading YOLO weights: {e}")
+            print(f"YOLO load note: {e}")
 
-    def _update_stream_loop(self):
+    def _render_loop(self):
+        """Runs strictly on the Tkinter main thread."""
         if not self.is_streaming:
             return
 
         frame = None
-        if self.picam2:
+        if self.camera_ready:
             try:
-                frame = self.picam2.capture_array()  # Already RGB888
-            except Exception:
-                pass
-        elif self.cap and self.cap.isOpened():
-            ret, bgr_frame = self.cap.read()
-            if ret:
-                frame = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+                if self.picam2:
+                    frame = self.picam2.capture_array()
+                elif self.cap and self.cap.isOpened():
+                    ret, bgr = self.cap.read()
+                    if ret:
+                        import cv2
+                        frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+            except Exception as e:
+                print(f"Frame capture error: {e}")
 
         if frame is not None:
-            self.latest_frame = frame
-            # Scale down for smooth 7-inch UI preview display (approx 360x270)
-            preview_img = Image.fromarray(frame)
-            preview_img = preview_img.resize((360, 270), Image.Resampling.BILINEAR)
-            img_tk = ImageTk.PhotoImage(image=preview_img)
+            self.current_frame = frame
+            # Downscale frame for preview window (350x260 fits the 50% left box perfectly)
+            img = Image.fromarray(frame)
+            img = img.resize((350, 260), Image.Resampling.BILINEAR)
+            img_tk = ImageTk.PhotoImage(image=img)
             
+            # Keep reference and update label
             self.video_label.img_tk = img_tk
             self.video_label.configure(image=img_tk, text="")
 
-        # Poll video feed at ~25 FPS
+        # Poll next frame (~30 FPS)
         if self.is_streaming:
-            self.after(40, self._update_stream_loop)
+            self.loop_id = self.after(33, self._render_loop)
 
     def trigger_autofocus(self):
-        """Forces an instantaneous one-shot autofocus cycle on Camera Module 3."""
         if self.picam2:
             try:
                 self.picam2.set_controls({"AfTrigger": 0})
-                self.results_box.insert(tk.END, "[Hardware] Autofocus cycle triggered.\n")
+                self.results_box.insert(tk.END, "[Focus] Sweep triggered.\n")
                 self.results_box.see(tk.END)
             except Exception as e:
-                self.results_box.insert(tk.END, f"[Hardware Error] AF trigger: {e}\n")
+                self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
 
     def trigger_analysis(self):
-        if self.latest_frame is None:
+        if self.current_frame is None:
             messagebox.showwarning("Vision Warning", "No valid camera frame captured yet.")
             return
 
         self.scan_btn.config(state="disabled", text="Processing Vision Model...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Capturing high-res frame...\nExecuting YOLOv8 Component Identification...\nRunning Tesseract OCR...\n")
+        self.results_box.insert("1.0", "Analyzing frame...\nRunning YOLOv8 & OCR detection...\n")
 
-        # Run detection in background thread so GUI never hangs
-        target_frame = self.latest_frame.copy()
+        target_frame = self.current_frame.copy()
         threading.Thread(target=self._run_inference_pipeline, args=(target_frame,), daemon=True).start()
 
     def _run_inference_pipeline(self, frame_rgb):
         output_logs = []
         try:
-            # 1. OCR Preprocessing on the full frame
+            import cv2
+            import pytesseract
+            
             gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-            # High-contrast adaptive thresholding for laser-etched/printed IC part numbers
             blurred = cv2.GaussianBlur(gray, (3, 3), 0)
             thresh = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
             
             ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
             extracted_text = pytesseract.image_to_string(thresh, config=ocr_config).strip()
-            
-            # Clean OCR output
             lines = [line.strip() for line in extracted_text.split("\n") if len(line.strip()) >= 2]
             
-            # 2. YOLO Object Classification / Bounding Boxes
             detections = []
             if self.model:
                 results = self.model(frame_rgb, verbose=False)[0]
@@ -734,24 +759,24 @@ class VisionAnalyzerView(tk.Frame):
                     name = self.model.names[cls_id]
                     detections.append(f"{name} ({conf * 100:.1f}%)")
 
-            output_logs.append("=== IDENTIFICATION REPORT ===\n")
+            output_logs.append("=== IDENTIFICATION REPORT ===")
             if detections:
-                output_logs.append(f"Visual Type: {', '.join(detections)}\n")
+                output_logs.append(f"Visual Package: {', '.join(detections)}\n")
             else:
-                output_logs.append("Visual Type: Unclassified Package (Generic)\n")
+                output_logs.append("Visual Package: Unclassified / Standard SMD/DIP\n")
                 
-            output_logs.append("\n=== OCR TEXT / PART NO. ===")
+            output_logs.append("=== OCR TEXT / PART NO. ===")
             if lines:
                 for line in lines:
                     output_logs.append(f"• {line}")
             else:
-                output_logs.append("No distinct alphanumeric markings detected.")
+                output_logs.append("No clear markings detected.")
                 
             report_text = "\n".join(output_logs)
             self.controller.log_test_result("Optical Identifier", f"Visual: {len(detections)} parts, OCR: {len(lines)} lines")
 
         except Exception as e:
-            report_text = f"Inference Pipeline Error:\n{e}"
+            report_text = f"Inference Error:\n{e}"
 
         def update_gui():
             self.results_box.delete("1.0", tk.END)
