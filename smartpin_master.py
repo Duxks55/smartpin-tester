@@ -564,7 +564,7 @@ class VisionAnalyzerView(tk.Frame):
                   relief="flat", padx=15, pady=5, command=self.exit_to_menu).pack(side="left", padx=20)
         tk.Label(header, text="OPTICAL COMPONENT IDENTIFIER (PI CAM 3)", fg="#f8fafc", bg="#1e293b", font=("Helvetica", 14, "bold")).pack(side="left", padx=10)
         
-        # Content frame with locked 50/50 split (uniform="half")
+        # Content frame with locked 50/50 split
         content = tk.Frame(self, bg="#0f172a", padx=15, pady=10)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
@@ -584,7 +584,6 @@ class VisionAnalyzerView(tk.Frame):
         
         tk.Label(control_box, text="Recognition Telemetry", fg="#38bdf8", bg="#1e293b", font=("Helvetica", 12, "bold")).pack(anchor="w")
         
-        # Constrained width so text doesn't push the video feed off screen
         self.results_box = tk.Text(control_box, bg="#0f172a", fg="#f8fafc", font=("Courier", 10), width=32, height=12, bd=0, relief="flat", wrap="word")
         self.results_box.pack(fill="both", expand=True, pady=(10, 10))
         self.results_box.insert("1.0", "Align component under Pi Cam 3 lens.\nEnsure good lighting on markings.\n\nPress 'Analyze / Scan Component' below.\n")
@@ -611,13 +610,8 @@ class VisionAnalyzerView(tk.Frame):
         self.results_box.delete("1.0", tk.END)
         self.results_box.insert("1.0", "Initializing sensor pipeline...\n")
         
-        # Spin up camera hardware in background thread
         threading.Thread(target=self._start_camera_hardware, daemon=True).start()
         
-        # Start the main-thread UI render loop
-        self._render_loop()
-        
-        # Pre-load YOLO in background if not ready
         if self.model is None and CV_AVAILABLE:
             threading.Thread(target=self._load_yolo_model, daemon=True).start()
 
@@ -632,8 +626,8 @@ class VisionAnalyzerView(tk.Frame):
             try:
                 self.picam2.stop()
                 self.picam2.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Picamera2 cleanup warning: {e}")
             self.picam2 = None
             
         if self.cap:
@@ -644,74 +638,63 @@ class VisionAnalyzerView(tk.Frame):
             self.cap = None
 
     def _start_camera_hardware(self):
-        """Initializes Picamera2 hardware off the main UI thread."""
         try:
             from picamera2 import Picamera2
+            
             cam = Picamera2()
             config = cam.create_preview_configuration(main={"size": (640, 480), "format": "RGB888"})
             cam.configure(config)
             cam.start()
+            
+            # Allow driver buffers to settle before applying controls
+            time.sleep(0.15)
             try:
-                cam.set_controls({"AfMode": 2})  # Continuous autofocus
-            except Exception:
-                pass
+                cam.set_controls({"AfMode": 2})
+            except Exception as af_err:
+                print(f"AF notice: {af_err}")
+            
             self.picam2 = cam
             self.camera_ready = True
-            self.after(0, lambda: self.results_box.insert(tk.END, "Camera active. Autofocus locked.\n"))
+            
+            # Safely initiate UI updates on the main thread
+            self.after(0, self._on_camera_started)
             return
         except Exception as e:
-            print(f"Picamera2 init error: {e}")
+            err_text = str(e)
+            print(f"Picamera2 init failure: {err_text}")
+            self.after(0, lambda msg=err_text: self.video_label.config(text=f"Camera Error:\n{msg[:100]}"))
 
-        # Fallback to OpenCV VideoCapture
-        try:
-            import cv2
-            cap = cv2.VideoCapture(0)
-            if cap.isOpened():
-                self.cap = cap
-                self.camera_ready = True
-                return
-        except Exception:
-            pass
-
-        self.after(0, lambda: self.video_label.config(text="Camera Failed to Start.\nCheck ribbon cable."))
+    def _on_camera_started(self):
+        self.results_box.insert(tk.END, "Camera active. Live stream running.\n")
+        self._render_loop()
 
     def _load_yolo_model(self):
         try:
             from ultralytics import YOLO
             self.model = YOLO("yolov8n.pt")
         except Exception as e:
-            print(f"YOLO load note: {e}")
+            print(f"YOLO load notice: {e}")
 
     def _render_loop(self):
-        """Runs strictly on the Tkinter main thread."""
         if not self.is_streaming:
             return
 
         frame = None
-        if self.camera_ready:
+        if self.camera_ready and self.picam2:
             try:
-                if self.picam2:
-                    frame = self.picam2.capture_array()
-                elif self.cap and self.cap.isOpened():
-                    ret, bgr = self.cap.read()
-                    if ret:
-                        import cv2
-                        frame = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
+                frame = self.picam2.capture_array()
             except Exception as e:
-                print(f"Frame capture error: {e}")
+                print(f"Capture error: {e}")
 
         if frame is not None:
             self.current_frame = frame
-            # Downscale frame for preview window (350x260 fits the 50% left box perfectly)
             img = Image.fromarray(frame)
             img = img.resize((350, 260), Image.Resampling.BILINEAR)
             img_tk = ImageTk.PhotoImage(image=img)
             
-            # Keep reference and update label
             self.video_label.img_tk = img_tk
             self.video_label.configure(image=img_tk, text="")
 
-        # Poll next frame (~30 FPS)
         if self.is_streaming:
             self.loop_id = self.after(33, self._render_loop)
 
@@ -784,7 +767,6 @@ class VisionAnalyzerView(tk.Frame):
             self.scan_btn.config(state="normal", text="🔍 Analyze / Scan Component")
 
         self.after(0, update_gui)
-
 
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
