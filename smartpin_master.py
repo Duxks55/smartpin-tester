@@ -645,7 +645,7 @@ class VisionAnalyzerView(tk.Frame):
         self.camera_ready = False
         self.video_label.config(image="", text="Starting Camera Module 3...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Initializing 720p Macro Pipeline...\n")
+        self.results_box.insert("1.0", "Initializing 1080p Macro Pipeline...\n")
         
         threading.Thread(target=self._start_camera_hardware, daemon=True).start()
         
@@ -672,17 +672,22 @@ class VisionAnalyzerView(tk.Frame):
             from picamera2 import Picamera2
             
             cam = Picamera2()
-            # Single unified 720p stream: prevents ISP lores format crash and delivers high detail
+            # 1080p stream for high-clarity micro inspection
             config = cam.create_preview_configuration(
-                main={"size": (1280, 720), "format": "RGB888"}
+                main={"size": (1920, 1080), "format": "RGB888"}
             )
             cam.configure(config)
             cam.start()
             
             time.sleep(0.15)
             try:
-                # AfMode: 2 (Continuous AF), AfRange: 2 (Macro Range: ~5cm-30cm)
-                cam.set_controls({"AfMode": 2, "AfRange": 2})
+                # AfMode 2: Continuous AF, AfRange 2: Macro (5cm - 30cm)
+                # Sharpness 1.5 boosts fine laser-etched character contrast
+                cam.set_controls({
+                    "AfMode": 2, 
+                    "AfRange": 2,
+                    "Sharpness": 1.5
+                })
             except Exception as af_err:
                 print(f"AF notice: {af_err}")
             
@@ -695,7 +700,7 @@ class VisionAnalyzerView(tk.Frame):
             self.after(0, lambda msg=err_text: self.video_label.config(text=f"Camera Error:\n{msg[:100]}"))
 
     def _on_camera_started(self):
-        self.results_box.insert(tk.END, "Camera active. Macro AF engaged.\n")
+        self.results_box.insert(tk.END, "Camera active. 1080p Macro AF engaged.\n")
         self._render_loop()
 
     def _load_yolo_model(self):
@@ -718,7 +723,22 @@ class VisionAnalyzerView(tk.Frame):
 
         if frame is not None:
             self.current_frame = frame
-            img = Image.fromarray(frame)
+            # Superimpose targeting reticle to assist centering component under lens
+            h, w, _ = frame.shape
+            cy, cx = h // 2, w // 2
+            crop_h, crop_w = int(h * 0.45), int(w * 0.45)
+            
+            preview_frame = frame.copy()
+            # Draw corner reticle on preview frame
+            cv2.rectangle(
+                preview_frame,
+                (cx - crop_w // 2, cy - crop_h // 2),
+                (cx + crop_w // 2, cy + crop_h // 2),
+                (6, 182, 212),
+                3
+            )
+            
+            img = Image.fromarray(preview_frame)
             img = img.resize((350, 260), Image.Resampling.BILINEAR)
             img_tk = ImageTk.PhotoImage(image=img)
             
@@ -731,7 +751,7 @@ class VisionAnalyzerView(tk.Frame):
     def set_macro_focus(self):
         if self.picam2:
             try:
-                # AfMode 0 (Manual), LensPosition ~8.5 diopters (macro)
+                # AfMode 0 (Manual), LensPosition ~8.5 diopters (macro close-up)
                 self.picam2.set_controls({"AfMode": 0, "LensPosition": 8.5})
                 self.results_box.insert(tk.END, "[Focus] Locked to Macro Close-Up (~7cm).\n")
                 self.results_box.see(tk.END)
@@ -754,13 +774,20 @@ class VisionAnalyzerView(tk.Frame):
 
         self.scan_btn.config(state="disabled", text="✨ Running AI Vision...")
         self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Capturing 720p frame...\nQuerying AI component identification engine...\n")
+        self.results_box.insert("1.0", "Capturing 1080p high-detail frame...\nApplying macro center crop & contrast filter...\n")
 
-        target_frame = self.current_frame.copy()
-        threading.Thread(target=self._run_inference_pipeline, args=(target_frame,), daemon=True).start()
+        # Digital Macro Crop: crop the center 45% of frame where the component sits
+        raw_frame = self.current_frame.copy()
+        h, w, _ = raw_frame.shape
+        cy, cx = h // 2, w // 2
+        crop_h, crop_w = int(h * 0.45), int(w * 0.45)
+        
+        cropped_target = raw_frame[cy - crop_h // 2 : cy + crop_h // 2, cx - crop_w // 2 : cx + crop_w // 2]
+
+        threading.Thread(target=self._run_inference_pipeline, args=(cropped_target,), daemon=True).start()
 
     def _query_ai_vision(self, frame_rgb):
-        """Uses Google GenAI SDK if an API key is set in environment, otherwise returns None."""
+        """Uses Google GenAI SDK if GEMINI_API_KEY is found in environment, else returns None."""
         api_key = os.environ.get("GEMINI_API_KEY")
         if not api_key:
             return None
@@ -794,7 +821,7 @@ class VisionAnalyzerView(tk.Frame):
 
     def _estimate_appearance_traits(self, img_rgb):
         h, w, _ = img_rgb.shape
-        center_crop = img_rgb[int(h*0.2):int(h*0.8), int(w*0.2):int(w*0.8)]
+        center_crop = img_rgb[int(h*0.1):int(h*0.9), int(w*0.1):int(w*0.9)]
         gray = cv2.cvtColor(center_crop, cv2.COLOR_RGB2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
         
@@ -886,7 +913,7 @@ class VisionAnalyzerView(tk.Frame):
                     output_logs.append("\n=== VISUAL PACKAGE TRAITS ===")
                     output_logs.append(self._estimate_appearance_traits(frame_rgb))
                     
-                output_logs.append("\n[Notice] Set GEMINI_API_KEY in ~/.bashrc to enable cloud AI identification & pinout lookup.")
+                output_logs.append("\n[Notice] Set GEMINI_API_KEY in ~/.env to enable cloud AI identification & pinout lookup.")
 
             report_text = "\n".join(output_logs)
             self.controller.log_test_result("Optical Identifier", "Scan completed")
