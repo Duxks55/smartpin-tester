@@ -372,33 +372,30 @@ class MainDashboard(tk.Frame):
         super().__init__(parent, bg=BG_DARK)
         self.controller = controller
         
-        # Sleek Glassmorphic-Style Header
-        header = tk.Frame(self, bg=SURFACE, height=54, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        # Header
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
         branding_box = tk.Frame(header, bg=SURFACE)
-        branding_box.pack(side="left", padx=18)
+        branding_box.pack(side="left", padx=16)
         
-        # Live System Indicator
         status_dot = tk.Label(branding_box, text="●", fg=EMERALD, bg=SURFACE, font=("Helvetica", 11))
         status_dot.pack(side="left", padx=(0, 6))
         
-        app_title = tk.Label(branding_box, text="SMARTPIN", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 13, "bold"))
+        app_title = tk.Label(branding_box, text="SMARTPIN", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 12, "bold"))
         app_title.pack(side="left")
         
-        app_sub = tk.Label(branding_box, text="STUDIO OS", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 10, "bold"))
+        app_sub = tk.Label(branding_box, text="STUDIO OS", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold"))
         app_sub.pack(side="left", padx=(4, 0))
         
-        # Right Quick Settings Button
         settings_btn = tk.Button(header, text="⚙ Preferences", bg=SURFACE_ALT, fg=TEXT_MAIN, activebackground="#334155",
                                  activeforeground=TEXT_MAIN, font=("Helvetica", 9, "bold"), relief="flat", 
-                                 padx=12, pady=4, cursor="hand2", command=lambda: controller.show_frame("SettingsView"))
-        settings_btn.pack(side="right", padx=16)
+                                 padx=10, pady=3, cursor="hand2", command=lambda: controller.show_frame("SettingsView"))
+        settings_btn.pack(side="right", padx=14)
 
-        # Smooth Touch Viewport
         container_frame = tk.Frame(self, bg=BG_DARK)
-        container_frame.pack(fill="both", expand=True, padx=12, pady=10)
+        container_frame.pack(fill="both", expand=True, padx=10, pady=8)
         
         self.canvas = tk.Canvas(container_frame, bg=BG_DARK, highlightthickness=0, yscrollincrement=1)
         self.scrollable_content = tk.Frame(self.canvas, bg=BG_DARK)
@@ -434,7 +431,6 @@ class MainDashboard(tk.Frame):
         def on_touch_release(event):
             self.smooth_momentum_glide()
 
-        # Modular Functional Matrix
         modules = [
             ("Optical Vision AI", "IMX708 Macro 1080p deep inspection", CYAN_ACCENT, "AI VISION", lambda: controller.show_frame("VisionAnalyzerView")),
             ("Transistor Checker", "Tri-channel BJT & MOSFET analysis", BLUE_ACCENT, "ANALOG", lambda: controller.show_frame("TransistorCheckerView")),
@@ -458,26 +454,25 @@ class MainDashboard(tk.Frame):
 
     def create_module_card(self, parent, title, desc, accent_color, badge_text, command, row, col):
         card = tk.Frame(parent, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        card.grid(row=row, column=col, padx=8, pady=8, sticky="nsew")
+        card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
         
-        inner = tk.Frame(card, bg=SURFACE, padx=16, pady=14)
+        inner = tk.Frame(card, bg=SURFACE, padx=14, pady=12)
         inner.pack(fill="both", expand=True)
         
-        # Header Row: Title & Chip Badge
         top_row = tk.Frame(inner, bg=SURFACE)
         top_row.pack(fill="x")
         
         title_lbl = tk.Label(top_row, text=title, fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold"))
         title_lbl.pack(side="left")
         
-        badge = tk.Label(top_row, text=badge_text, fg=accent_color, bg="#1a2333", font=("Helvetica", 7, "bold"), padx=6, pady=2)
+        badge = tk.Label(top_row, text=badge_text, fg=accent_color, bg="#1a2333", font=("Helvetica", 7, "bold"), padx=5, pady=2)
         badge.pack(side="right")
         
         desc_lbl = tk.Label(inner, text=desc, fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 9), anchor="w", justify="left")
-        desc_lbl.pack(fill="x", pady=(6, 12))
+        desc_lbl.pack(fill="x", pady=(4, 10))
         
         btn = tk.Button(inner, text="Launch Tool →", bg=SURFACE_ALT, fg=accent_color, activebackground=accent_color,
-                        activeforeground="#ffffff", font=("Helvetica", 9, "bold"), relief="flat", padx=12, pady=5,
+                        activeforeground="#ffffff", font=("Helvetica", 9, "bold"), relief="flat", padx=10, pady=4,
                         cursor="hand2", command=command)
         btn.pack(anchor="w")
 
@@ -512,7 +507,7 @@ class MainDashboard(tk.Frame):
 
 
 # ==============================================================================
-# REFINED OPTICAL COMPONENT IDENTIFIER
+# REFINED OPTICAL COMPONENT IDENTIFIER (FIXED TOUCH & BUTTON VISIBILITY)
 # ==============================================================================
 class VisionAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -526,22 +521,22 @@ class VisionAnalyzerView(tk.Frame):
         self.current_frame = None
         self.loop_id = None
         
-        # Clean Top Navigation
-        header = tk.Frame(self, bg=SURFACE, height=54, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        # Header (compact 48px to preserve height)
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
         back_btn = tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                             relief="flat", padx=12, pady=4, cursor="hand2", command=self.exit_to_menu)
-        back_btn.pack(side="left", padx=16)
+                             relief="flat", padx=10, pady=4, cursor="hand2", command=self.exit_to_menu)
+        back_btn.pack(side="left", padx=12)
         
         title_box = tk.Frame(header, bg=SURFACE)
-        title_box.pack(side="left", padx=10)
+        title_box.pack(side="left", padx=8)
         tk.Label(title_box, text="OPTICAL IDENTIFIER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         tk.Label(title_box, text="IMX708 MACRO AI", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold")).pack(side="left", padx=(6, 0))
         
         # 50/50 Workspace Grid
-        content = tk.Frame(self, bg=BG_DARK, padx=12, pady=8)
+        content = tk.Frame(self, bg=BG_DARK, padx=8, pady=6)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
         content.grid_columnconfigure(1, weight=1, uniform="half")
@@ -549,70 +544,70 @@ class VisionAnalyzerView(tk.Frame):
         
         # Left Side: Camera Viewport Card
         cam_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        cam_card.grid(row=0, column=0, sticky="nsew", padx=6, pady=4)
+        cam_card.grid(row=0, column=0, sticky="nsew", padx=4, pady=2)
         
-        cam_bar = tk.Frame(cam_card, bg=SURFACE, height=32)
-        cam_bar.pack(fill="x", padx=12, pady=(6, 0))
+        cam_bar = tk.Frame(cam_card, bg=SURFACE, height=28)
+        cam_bar.pack(fill="x", padx=10, pady=(6, 2))
         tk.Label(cam_bar, text="LIVE SENSOR FEED", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(side="left")
-        self.feed_status = tk.Label(cam_bar, text="● 1080p STANDBY", fg=AMBER, bg=SURFACE, font=("Helvetica", 8, "bold"))
+        self.feed_status = tk.Label(cam_bar, text="● STANDBY", fg=AMBER, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.feed_status.pack(side="right")
         
         self.video_label = tk.Label(cam_card, text="Connecting Camera Module 3...", bg="#060911", fg=TEXT_MUTED, font=("Helvetica", 10))
-        self.video_label.pack(fill="both", expand=True, padx=8, pady=(4, 8))
+        self.video_label.pack(fill="both", expand=True, padx=6, pady=(2, 6))
         
-        # Right Side: Telemetry & Smart KPI Dashboard
+        # Right Side: Telemetry Panel Card
         panel_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        panel_card.grid(row=0, column=1, sticky="nsew", padx=6, pady=4)
+        panel_card.grid(row=0, column=1, sticky="nsew", padx=4, pady=2)
         
-        # Micro KPI Badges
+        # --- CRITICAL FIX: PACK BUTTON BAR AT BOTTOM FIRST ---
+        btn_box = tk.Frame(panel_card, bg=SURFACE)
+        btn_box.pack(side="bottom", fill="x", padx=10, pady=(4, 8))
+        
+        self.scan_btn = tk.Button(btn_box, text="✨ Execute AI Analysis", bg=CYAN_ACCENT, fg="#ffffff", activebackground="#0891b2",
+                                  activeforeground="#ffffff", font=("Helvetica", 10, "bold"), relief="flat", pady=8,
+                                  cursor="hand2", command=self.trigger_analysis)
+        self.scan_btn.pack(fill="x", pady=(0, 4))
+        
+        focus_row = tk.Frame(btn_box, bg=SURFACE)
+        focus_row.pack(fill="x")
+        focus_row.grid_columnconfigure(0, weight=1)
+        focus_row.grid_columnconfigure(1, weight=1)
+        
+        self.macro_btn = tk.Button(focus_row, text="🔬 Lock Macro (7cm)", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
+                                   relief="flat", pady=5, cursor="hand2", command=self.set_macro_focus)
+        self.macro_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
+        
+        self.autofocus_btn = tk.Button(focus_row, text="🎯 Trigger AF Sweep", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
+                                       relief="flat", pady=5, cursor="hand2", command=self.trigger_autofocus)
+        self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
+
+        # KPI Badges
         kpi_grid = tk.Frame(panel_card, bg=SURFACE)
-        kpi_grid.pack(fill="x", padx=12, pady=(10, 4))
+        kpi_grid.pack(side="top", fill="x", padx=10, pady=(6, 2))
         kpi_grid.grid_columnconfigure(0, weight=1)
         kpi_grid.grid_columnconfigure(1, weight=1)
         
         self.kpi_package = self.create_kpi_cell(kpi_grid, "PACKAGE", "Scanning...", CYAN_ACCENT, 0, 0)
         self.kpi_part = self.create_kpi_cell(kpi_grid, "IDENTIFIED PART", "Standby", EMERALD, 0, 1)
         
-        # Detailed Raw Log Viewport
+        # Result Log Viewport (Explicit height=7 so it never overflows)
         text_container = tk.Frame(panel_card, bg="#060911", highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        text_container.pack(fill="both", expand=True, padx=12, pady=6)
+        text_container.pack(side="top", fill="both", expand=True, padx=10, pady=4)
         
         scrollbar = tk.Scrollbar(text_container, orient="vertical", width=16)
         scrollbar.pack(side="right", fill="y")
         
         self.results_box = tk.Text(text_container, bg="#060911", fg="#e2e8f0", font=("Consolas", 9), 
-                                   bd=0, relief="flat", wrap="word", yscrollcommand=scrollbar.set)
-        self.results_box.pack(side="left", fill="both", expand=True, padx=8, pady=8)
+                                   bd=0, relief="flat", wrap="word", height=7, yscrollcommand=scrollbar.set)
+        self.results_box.pack(side="left", fill="both", expand=True, padx=6, pady=6)
         scrollbar.config(command=self.results_box.yview)
         self._bind_touch_scroll(self.results_box)
         
         self.results_box.insert("1.0", "Position component under lens (5-10cm).\nContinuous macro focus active.\nTap 'Execute AI Analysis' below.\n")
-        
-        # Touch Action Buttons
-        btn_box = tk.Frame(panel_card, bg=SURFACE)
-        btn_box.pack(fill="x", padx=12, pady=(0, 10))
-        
-        self.scan_btn = tk.Button(btn_box, text="✨ Execute AI Analysis", bg=CYAN_ACCENT, fg="#ffffff", activebackground="#0891b2",
-                                  activeforeground="#ffffff", font=("Helvetica", 10, "bold"), relief="flat", pady=8,
-                                  cursor="hand2", command=self.trigger_analysis)
-        self.scan_btn.pack(fill="x", pady=2)
-        
-        focus_row = tk.Frame(btn_box, bg=SURFACE)
-        focus_row.pack(fill="x", pady=(2, 0))
-        focus_row.grid_columnconfigure(0, weight=1)
-        focus_row.grid_columnconfigure(1, weight=1)
-        
-        self.macro_btn = tk.Button(focus_row, text="🔬 Lock Macro (7cm)", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
-                                   relief="flat", pady=4, cursor="hand2", command=self.set_macro_focus)
-        self.macro_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
-        
-        self.autofocus_btn = tk.Button(focus_row, text="🎯 Trigger AF Sweep", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
-                                       relief="flat", pady=4, cursor="hand2", command=self.trigger_autofocus)
-        self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
     def create_kpi_cell(self, parent, label, default_value, color, r, c):
-        f = tk.Frame(parent, bg=SURFACE_ALT, padx=8, pady=6, highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        f.grid(row=r, column=c, padx=3, pady=2, sticky="nsew")
+        f = tk.Frame(parent, bg=SURFACE_ALT, padx=6, pady=4, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        f.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
         tk.Label(f, text=label, fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(anchor="w")
         val = tk.Label(f, text=default_value, fg=color, bg=SURFACE_ALT, font=("Helvetica", 9, "bold"))
         val.pack(anchor="w")
@@ -779,7 +774,6 @@ class VisionAnalyzerView(tk.Frame):
                 output_logs.append("=== AI COMPONENT IDENTIFICATION ===")
                 output_logs.append(ai_result.strip())
                 
-                # Parse basic tokens for KPI cards
                 lower = ai_result.lower()
                 for pkg in ["to-92", "to-220", "soic-8", "dip-8", "dip-14", "sot-23", "resistor", "capacitor"]:
                     if pkg in lower:
@@ -826,22 +820,22 @@ class TransistorCheckerView(tk.Frame):
         super().__init__(parent, bg=BG_DARK)
         self.controller = controller
         
-        header = tk.Frame(self, bg=SURFACE, height=54, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
         tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", padx=12, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=16)
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=12)
         tk.Label(header, text="TRANSISTOR CHECKER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         
         body = tk.Frame(self, bg=BG_DARK)
-        body.pack(fill="both", expand=True, padx=24, pady=20)
+        body.pack(fill="both", expand=True, padx=20, pady=16)
         
-        card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=20, pady=20)
+        card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=16)
         card.pack(fill="both", expand=True)
         
-        self.result_box = tk.Text(card, bg="#060911", fg=CYAN_ACCENT, font=("Consolas", 10), height=10, bd=0, relief="flat")
-        self.result_box.pack(fill="both", expand=True, pady=(0, 16))
+        self.result_box = tk.Text(card, bg="#060911", fg=CYAN_ACCENT, font=("Consolas", 10), height=8, bd=0, relief="flat")
+        self.result_box.pack(fill="both", expand=True, pady=(0, 14))
         self.result_box.insert("1.0", "Insert BJT or MOSFET into ZIF Socket pins 1-3.\nTap 'Run Component Sweep' to scan multiplexer channels.\n")
         
         test_btn = tk.Button(card, text="⚡ Run Component Sweep", bg=BLUE_ACCENT, fg="#ffffff", font=("Helvetica", 10, "bold"),
@@ -863,22 +857,22 @@ class CapacitorAnalyzerView(tk.Frame):
         super().__init__(parent, bg=BG_DARK)
         self.controller = controller
         
-        header = tk.Frame(self, bg=SURFACE, height=54, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
         tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", padx=12, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=16)
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=12)
         tk.Label(header, text="CAPACITOR ANALYZER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         
         body = tk.Frame(self, bg=BG_DARK)
-        body.pack(fill="both", expand=True, padx=24, pady=20)
+        body.pack(fill="both", expand=True, padx=20, pady=16)
         
-        card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=20, pady=20)
+        card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=16)
         card.pack(fill="both", expand=True)
         
-        self.result_box = tk.Text(card, bg="#060911", fg=EMERALD, font=("Consolas", 10), height=10, bd=0, relief="flat")
-        self.result_box.pack(fill="both", expand=True, pady=(0, 16))
+        self.result_box = tk.Text(card, bg="#060911", fg=EMERALD, font=("Consolas", 10), height=8, bd=0, relief="flat")
+        self.result_box.pack(fill="both", expand=True, pady=(0, 14))
         self.result_box.insert("1.0", "Seat capacitor in test channels.\nTap 'Pulse Charge & Measure' below.\n")
         
         test_btn = tk.Button(card, text="⚡ Pulse Charge & Measure", bg=EMERALD, fg="#ffffff", font=("Helvetica", 10, "bold"),
@@ -902,38 +896,38 @@ class LedBlinkerManagerView(tk.Frame):
         self.controller = controller
         self.blinking_active = {21: False, 25: False}
         
-        header = tk.Frame(self, bg=SURFACE, height=54, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
         tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", padx=12, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=16)
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=12)
         tk.Label(header, text="GPIO SIGNAL TESTER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         
         body = tk.Frame(self, bg=BG_DARK)
-        body.pack(fill="both", expand=True, padx=20, pady=16)
+        body.pack(fill="both", expand=True, padx=16, pady=12)
         
         self.create_led_card(body, "LINE 1 (GPIO 21)", 21, 0)
         self.create_led_card(body, "LINE 2 (GPIO 25)", 25, 1)
 
     def create_led_card(self, parent, title, pin, col):
-        card = tk.Frame(parent, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=16)
-        card.grid(row=0, column=col, padx=10, pady=10, sticky="nsew")
+        card = tk.Frame(parent, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=14)
+        card.grid(row=0, column=col, padx=8, pady=8, sticky="nsew")
         parent.grid_columnconfigure(col, weight=1)
         parent.grid_rowconfigure(0, weight=1)
         
         tk.Label(card, text=title, fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(anchor="w")
         
         status_lbl = tk.Label(card, text="● OFF", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 9, "bold"))
-        status_lbl.pack(anchor="w", pady=(4, 16))
+        status_lbl.pack(anchor="w", pady=(2, 12))
         card.status_lbl = status_lbl
         
         tk.Button(card, text="Power ON", bg=EMERALD, fg="#ffffff", font=("Helvetica", 9, "bold"),
-                  relief="flat", width=14, pady=5, cursor="hand2", command=lambda: self.turn_on(pin, card)).pack(anchor="w", pady=4)
+                  relief="flat", width=14, pady=5, cursor="hand2", command=lambda: self.turn_on(pin, card)).pack(anchor="w", pady=3)
         tk.Button(card, text="Power OFF", bg=ROSE, fg="#ffffff", font=("Helvetica", 9, "bold"),
-                  relief="flat", width=14, pady=5, cursor="hand2", command=lambda: self.turn_off(pin, card)).pack(anchor="w", pady=4)
+                  relief="flat", width=14, pady=5, cursor="hand2", command=lambda: self.turn_off(pin, card)).pack(anchor="w", pady=3)
         tk.Button(card, text="Oscillate (1Hz)", bg=AMBER, fg="#ffffff", font=("Helvetica", 9, "bold"),
-                  relief="flat", width=14, pady=5, cursor="hand2", command=lambda: self.toggle_blink(pin, card)).pack(anchor="w", pady=4)
+                  relief="flat", width=14, pady=5, cursor="hand2", command=lambda: self.toggle_blink(pin, card)).pack(anchor="w", pady=3)
 
     def turn_on(self, pin, card):
         self.blinking_active[pin] = False
@@ -968,35 +962,35 @@ class SettingsView(tk.Frame):
         super().__init__(parent, bg=BG_DARK)
         self.controller = controller
         
-        header = tk.Frame(self, bg=SURFACE, height=54, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
         
         tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", padx=12, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=16)
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=12)
         tk.Label(header, text="SYSTEM SETTINGS", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         
         body = tk.Frame(self, bg=BG_DARK)
-        body.pack(fill="both", expand=True, padx=24, pady=16)
+        body.pack(fill="both", expand=True, padx=20, pady=12)
         
-        net_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=12)
-        net_card.pack(fill="x", pady=6)
+        net_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
+        net_card.pack(fill="x", pady=4)
         
         tk.Label(net_card, text="NETWORK ADAPTER STATUS", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
         host, ip = self.controller.get_system_network_info()
-        tk.Label(net_card, text=f"Node: {host}  •  IP: {ip}", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(4, 0))
+        tk.Label(net_card, text=f"Node: {host}  •  IP: {ip}", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 0))
 
-        update_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=12)
-        update_card.pack(fill="x", pady=6)
+        update_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
+        update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.2.0 (Stable)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(4, 8))
+        tk.Label(update_card, text="SmartPin Suite OS v1.2.0 (Stable)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
-        self.update_status_lbl.pack(anchor="w", pady=(0, 6))
+        self.update_status_lbl.pack(anchor="w", pady=(0, 4))
         
         tk.Button(update_card, text="Check GitHub Releases", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", padx=12, pady=5, cursor="hand2", command=self.trigger_software_update).pack(anchor="w")
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=self.trigger_software_update).pack(anchor="w")
 
     def trigger_software_update(self):
         self.update_status_lbl.config(text="Checking remote origin...", fg=AMBER)
@@ -1022,7 +1016,7 @@ class WifiManagerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG_DARK)
         tk.Button(self, text="← Return", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", command=lambda: controller.show_frame("SettingsView")).pack(anchor="nw", padx=16, pady=16)
+                  relief="flat", command=lambda: controller.show_frame("SettingsView")).pack(anchor="nw", padx=14, pady=14)
 
 
 if __name__ == "__main__":
