@@ -855,7 +855,7 @@ class VisionAnalyzerView(tk.Frame):
         tk.Label(id_card, text=comp_title, fg=TEXT_MAIN, bg=SURFACE_ALT, font=("Helvetica", 10, "bold"), wraplength=325, justify="left").pack(anchor="w", pady=(3, 2))
         tk.Label(id_card, text=data.get("function_summary", ""), fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=325, justify="left").pack(anchor="w")
 
-        # 2. PINOUT CONFIGURATION CARD
+        # 2. PINOUT CONFIGURATION CARD (Optimized Stacked Layout - No Horizontal Clipping)
         pinouts = data.get("pinouts", [])
         if pinouts:
             pin_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=8)
@@ -864,10 +864,14 @@ class VisionAnalyzerView(tk.Frame):
             
             for p in pinouts:
                 row = tk.Frame(pin_card, bg="#0b1120", padx=6, pady=3)
-                row.pack(fill="x", pady=1)
-                tk.Label(row, text=f"PIN {p.get('pin', '?')}", fg=CYAN_ACCENT, bg="#0b1120", font=("Consolas", 8, "bold"), width=7, anchor="w").pack(side="left")
-                tk.Label(row, text=p.get("name", ""), fg=TEXT_MAIN, bg="#0b1120", font=("Helvetica", 8, "bold"), width=9, anchor="w").pack(side="left")
-                tk.Label(row, text=p.get("description", ""), fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 8), anchor="w").pack(side="left", fill="x", expand=True)
+                row.pack(fill="x", pady=2)
+                hdr = tk.Frame(row, bg="#0b1120")
+                hdr.pack(fill="x")
+                tk.Label(hdr, text=f"PIN {p.get('pin', '?')}", fg=CYAN_ACCENT, bg="#0b1120", font=("Consolas", 8, "bold")).pack(side="left")
+                tk.Label(hdr, text=f" • {p.get('name', '')}", fg=TEXT_MAIN, bg="#0b1120", font=("Helvetica", 8, "bold")).pack(side="left")
+                desc_txt = p.get("description", "")
+                if desc_txt:
+                    tk.Label(row, text=desc_txt, fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 8), wraplength=310, justify="left", anchor="w").pack(fill="x", pady=(1, 0))
 
         # 3. KEY ELECTRICAL RATINGS CARD
         specs = data.get("electrical_specs", [])
@@ -1391,7 +1395,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.7.2 (Clamped Touch Datasheet Scroll)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.7.3 (Optimized Stacked Pinout Cards)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
