@@ -299,8 +299,8 @@ class SmartPinMasterApp(tk.Tk):
         return hostname, ip_address
 
     def run_hardware_transistor_test(self):
-        mux1_pins = [4, 5, 6]
-        mux2_pins = [7, 8, 9]
+        mux1_pins = [4, 5, 6]  # Cathode / Low-side sink
+        mux2_pins = [7, 8, 9]  # Anode / High-side 3.3V source
         
         if HARDWARE_AVAILABLE:
             try:
@@ -328,73 +328,61 @@ class SmartPinMasterApp(tk.Tk):
                         return None
 
                 readings = {}
-                any_connection = False
-
                 for p1 in [0, 1, 2]:
                     for p2 in [0, 1, 2]:
-                        if p1 == p2: continue
+                        if p1 == p2:
+                            continue
                         v = get_voltage(p1, p2)
                         if v is not None:
                             readings[(p1, p2)] = v
-                            if v > 0.02:  
-                                any_connection = True
 
                 if not readings:
                     return "ERROR: ADS1115 ADC read failed on I2C bus."
 
-                if not any_connection:
+                active_junctions = [v for v in readings.values() if 0.15 < v < 2.4]
+                if not active_junctions:
                     return "EMPTY: No component seated in ZIF socket."
-                
-                shorted_count = sum(1 for v in readings.values() if v < 0.01)
-                total_readings = len(readings)
-                
-                if total_readings > 0 and (shorted_count / total_readings) > 0.7:
+
+                shorted_count = sum(1 for v in readings.values() if v < 0.05)
+                if shorted_count >= 4:
                     return "FAULT: Short circuit detected between pins."
-                
+
+                def is_conducting(v):
+                    return 0.12 < v < 2.4
+
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
-                
+
+                # 1. Check NPN: Base -> Collector AND Base -> Emitter conduct; reverse directions do NOT
                 for base in [0, 1, 2]:
                     others = [p for p in [0, 1, 2] if p != base]
-                    npn_match = True
-                    for target in others:
-                        v = readings.get((base, target), 0)
-                        if not (0.15 < v < 0.9 or v > 2.5):
-                            npn_match = False
-                            break
-                    if npn_match:
-                        ce_forward = readings.get((others[0], others[1]), 0)
-                        ce_reverse = readings.get((others[1], others[0]), 0)
-                        if ce_reverse > ce_forward and ce_reverse > 1.5:
-                            continue
+                    fwd_0 = readings.get((base, others[0]), 0)
+                    fwd_1 = readings.get((base, others[1]), 0)
+                    rev_0 = readings.get((others[0], base), 0)
+                    rev_1 = readings.get((others[1], base), 0)
 
-                        v_a = readings.get((base, others[0]), 0)
-                        v_b = readings.get((base, others[1]), 0)
-                        if v_a > v_b:
-                            collector, emitter = others[1], others[0]
+                    if is_conducting(fwd_0) and is_conducting(fwd_1) and not is_conducting(rev_0) and not is_conducting(rev_1):
+                        if fwd_0 > fwd_1:
+                            emitter, collector = others[0], others[1]
                         else:
-                            collector, emitter = others[0], others[1]
-
+                            emitter, collector = others[1], others[0]
                         found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                         break
 
+                # 2. Check PNP: Collector -> Base AND Emitter -> Base conduct; reverse directions do NOT
                 if not found_type:
                     for base in [0, 1, 2]:
                         others = [p for p in [0, 1, 2] if p != base]
-                        pnp_match = True
-                        for source_pin in others:
-                            v = readings.get((source_pin, base), 0)
-                            if not (0.15 < v < 0.9 or v > 2.5):
-                                pnp_match = False
-                                break
-                        if pnp_match:
-                            v_a = readings.get((others[0], base), 0)
-                            v_b = readings.get((others[1], base), 0)
-                            if v_a > v_b:
-                                collector, emitter = others[1], others[0]
-                            else:
-                                collector, emitter = others[0], others[1]
+                        fwd_0 = readings.get((others[0], base), 0)
+                        fwd_1 = readings.get((others[1], base), 0)
+                        rev_0 = readings.get((base, others[0]), 0)
+                        rev_1 = readings.get((base, others[1]), 0)
 
+                        if is_conducting(fwd_0) and is_conducting(fwd_1) and not is_conducting(rev_0) and not is_conducting(rev_1):
+                            if fwd_0 > fwd_1:
+                                emitter, collector = others[0], others[1]
+                            else:
+                                emitter, collector = others[1], others[0]
                             found_type, match_pin_b, match_pin_c, match_pin_e = "PNP", base, collector, emitter
                             break
 
@@ -409,7 +397,8 @@ class SmartPinMasterApp(tk.Tk):
 
                     return f"PASSED: {found_type} BJT | B: Pin {match_pin_b} • C: Pin {match_pin_c} • E: Pin {match_pin_e} | hFE: {hfe_val}"
                 else:
-                    return "INDETERMINATE: Non-standard component or unrecognized pinout."
+                    debug_str = ", ".join([f"{k[0]}->{k[1]}:{v:.2f}V" for k, v in sorted(readings.items())])
+                    return f"INDETERMINATE: Unrecognized pinout ({debug_str})"
             except Exception as e:
                 return f"Hardware Exception: {e}"
         else:
@@ -1134,7 +1123,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.5.1 (Streamlined Studio)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.5.2 (Directional BJT Sweep)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
