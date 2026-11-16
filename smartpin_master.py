@@ -77,6 +77,7 @@ class SmartPinMasterApp(tk.Tk):
         self.style.theme_use("clam")
         
         self.setup_led_gpio()
+        self.setup_status_rgb()
         
         self.container = tk.Frame(self, bg=BG_DARK)
         self.container.pack(fill="both", expand=True)
@@ -106,6 +107,59 @@ class SmartPinMasterApp(tk.Tk):
                     GPIO.output(pin, GPIO.LOW)
             except Exception as e:
                 print(f"LED GPIO Setup Error: {e}")
+
+    def setup_status_rgb(self):
+        """Initializes Common Cathode RGB status indicator (R=10, G=16, B=12)."""
+        self.rgb_pins = {"r": 10, "g": 16, "b": 12}
+        self.rgb_anim_id = None
+        if HARDWARE_AVAILABLE:
+            try:
+                GPIO.setmode(GPIO.BCM)
+                GPIO.setwarnings(False)
+                for pin in self.rgb_pins.values():
+                    GPIO.setup(pin, GPIO.OUT)
+                    GPIO.output(pin, GPIO.LOW)
+            except Exception as e:
+                print(f"RGB Setup Error: {e}")
+        self.set_status_led("idle")
+
+    def _write_rgb(self, r, g, b):
+        if HARDWARE_AVAILABLE:
+            try:
+                GPIO.output(self.rgb_pins["r"], GPIO.HIGH if r else GPIO.LOW)
+                GPIO.output(self.rgb_pins["g"], GPIO.HIGH if g else GPIO.LOW)
+                GPIO.output(self.rgb_pins["b"], GPIO.HIGH if b else GPIO.LOW)
+            except Exception:
+                pass
+
+    def set_status_led(self, state):
+        """Sets system status LED: 'idle', 'busy', 'success', 'error', or 'off'."""
+        if getattr(self, "rgb_anim_id", None):
+            self.after_cancel(self.rgb_anim_id)
+            self.rgb_anim_id = None
+
+        if state == "idle":
+            self._write_rgb(0, 1, 1)  # Solid Cyan: System Ready
+        elif state == "busy":
+            self._blink_rgb_loop((0, 0, 1), (1, 0, 1), interval_ms=200)  # Blue/Magenta pulse
+        elif state == "success":
+            self._write_rgb(0, 1, 0)  # Solid Green
+            self.rgb_anim_id = self.after(4000, lambda: self.set_status_led("idle"))
+        elif state == "error":
+            self._flash_error_loop(6)  # 3 fast red blinks, then back to idle
+        else:
+            self._write_rgb(0, 0, 0)
+
+    def _blink_rgb_loop(self, color1, color2, interval_ms=250, toggle=True):
+        self._write_rgb(*(color1 if toggle else color2))
+        self.rgb_anim_id = self.after(interval_ms, lambda: self._blink_rgb_loop(color1, color2, interval_ms, not toggle))
+
+    def _flash_error_loop(self, remaining_steps):
+        if remaining_steps <= 0:
+            self.set_status_led("idle")
+            return
+        self._write_rgb(1 if remaining_steps % 2 == 0 else 0, 0, 0)
+        self.rgb_anim_id = self.after(200, lambda: self._flash_error_loop(remaining_steps - 1))
 
     def set_led_state(self, pin, state):
         if HARDWARE_AVAILABLE:
@@ -337,17 +391,23 @@ class SmartPinMasterApp(tk.Tk):
                     elif path == '/run':
                         test_type = query_params.get('type', [''])[0]
                         res = "[System] Null"
+                        app_instance.after(0, lambda: app_instance.set_status_led("busy"))
                         if test_type == 'transistor':
                             res = app_instance.run_hardware_transistor_test()
                             app_instance.log_test_result("Transistor Module", f"Remote: {res}")
+                            status = "success" if "PASSED" in res else "error"
+                            app_instance.after(0, lambda s=status: app_instance.set_status_led(s))
                         elif test_type == 'capacitor':
                             res = "Capacitance Test Completed. Nominal ESR measured."
                             app_instance.log_test_result("Capacitor Module", "Remote measurement executed")
+                            app_instance.after(0, lambda: app_instance.set_status_led("success"))
                         elif test_type == 'i2c':
                             try:
                                 res = subprocess.check_output(["i2cdetect", "-y", "1"]).decode()
+                                app_instance.after(0, lambda: app_instance.set_status_led("success"))
                             except Exception as e:
                                 res = str(e)
+                                app_instance.after(0, lambda: app_instance.set_status_led("error"))
                             app_instance.log_test_result("I2C Subsystem", "Bus interrogated")
                         self.send_response(200)
                         self.send_header("Content-type", "application/json")
@@ -438,7 +498,7 @@ class MainDashboard(tk.Frame):
             ("GPIO Signal Hub", "Dual-line LED test (Pins 21 & 25)", ROSE, "DIGITAL", lambda: controller.show_frame("LedBlinkerManagerView")),
             ("Telemetry Portal", "Local browser web server interface", AMBER, "HTTP 5000", lambda: self.open_link("http://localhost:5000")),
             ("Bus Diagnostics", "I2C probe scan & ADS1115 check", "#a855f7", "SYSTEM", self.run_i2c_check),
-            ("Pinout Utility", "Header reference & multiplexer mapping", "#64748b", "TOOL", lambda: messagebox.showinfo("Pinout", "GPIO 4-9 Multiplexed\nI2C: 0x48 (ADS1115)\nLEDs: GPIO 21, 25")),
+            ("Pinout Utility", "Header reference & multiplexer mapping", "#64748b", "TOOL", lambda: messagebox.showinfo("Pinout", "GPIO 4-9 Multiplexed\nI2C: 0x48 (ADS1115)\nRGB LED: GPIO 10, 16, 12\nTest LEDs: GPIO 21, 25")),
             ("Hardware Calibration", "ADC baseline & zero-offset calibration", "#64748b", "TOOL", lambda: messagebox.showinfo("Calibrate", "ADC Baseline: 3.301V\nOffset: 0.002V\nNominal."))
         ]
         
@@ -451,6 +511,9 @@ class MainDashboard(tk.Frame):
         self.bind_global_touch(self.scrollable_content, on_touch_press, on_touch_drag, on_touch_release)
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
+
+    def on_show(self):
+        self.controller.set_status_led("idle")
 
     def create_module_card(self, parent, title, desc, accent_color, badge_text, command, row, col):
         card = tk.Frame(parent, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
@@ -498,16 +561,19 @@ class MainDashboard(tk.Frame):
         webbrowser.open(url)
 
     def run_i2c_check(self):
+        self.controller.set_status_led("busy")
         try:
             output = subprocess.check_output(["i2cdetect", "-y", "1"]).decode()
+            self.controller.set_status_led("success")
             messagebox.showinfo("I2C Diagnostic Bus", output)
             self.controller.log_test_result("Diagnostics", "I2C Bus Interrogated")
         except Exception as e:
+            self.controller.set_status_led("error")
             messagebox.showerror("Error", f"Failed: {e}")
 
 
 # ==============================================================================
-# REFINED OPTICAL COMPONENT IDENTIFIER (FIXED TOUCH & BUTTON VISIBILITY)
+# REFINED OPTICAL COMPONENT IDENTIFIER
 # ==============================================================================
 class VisionAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -521,7 +587,7 @@ class VisionAnalyzerView(tk.Frame):
         self.current_frame = None
         self.loop_id = None
         
-        # Header (compact 48px to preserve height)
+        # Header
         header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -559,7 +625,7 @@ class VisionAnalyzerView(tk.Frame):
         panel_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         panel_card.grid(row=0, column=1, sticky="nsew", padx=4, pady=2)
         
-        # --- CRITICAL FIX: PACK BUTTON BAR AT BOTTOM FIRST ---
+        # Pack Button Bar at bottom first so it always remains visible
         btn_box = tk.Frame(panel_card, bg=SURFACE)
         btn_box.pack(side="bottom", fill="x", padx=10, pady=(4, 8))
         
@@ -590,7 +656,7 @@ class VisionAnalyzerView(tk.Frame):
         self.kpi_package = self.create_kpi_cell(kpi_grid, "PACKAGE", "Scanning...", CYAN_ACCENT, 0, 0)
         self.kpi_part = self.create_kpi_cell(kpi_grid, "IDENTIFIED PART", "Standby", EMERALD, 0, 1)
         
-        # Result Log Viewport (Explicit height=7 so it never overflows)
+        # Result Log Viewport
         text_container = tk.Frame(panel_card, bg="#060911", highlightbackground=SURFACE_BORDER, highlightthickness=1)
         text_container.pack(side="top", fill="both", expand=True, padx=10, pady=4)
         
@@ -631,6 +697,7 @@ class VisionAnalyzerView(tk.Frame):
     def on_show(self):
         self.is_streaming = True
         self.camera_ready = False
+        self.controller.set_status_led("idle")
         self.feed_status.config(text="● CONNECTING...", fg=AMBER)
         self.video_label.config(image="", text="Starting Camera Module 3...")
         self.results_box.delete("1.0", tk.END)
@@ -671,6 +738,7 @@ class VisionAnalyzerView(tk.Frame):
             self.after(0, self._on_camera_started)
         except Exception as e:
             err_text = str(e)
+            self.after(0, lambda: self.controller.set_status_led("error"))
             self.after(0, lambda: self.video_label.config(text=f"Camera Error:\n{err_text[:100]}"))
 
     def _on_camera_started(self):
@@ -722,9 +790,11 @@ class VisionAnalyzerView(tk.Frame):
 
     def trigger_analysis(self):
         if not self.camera_ready or not self.picam2 or self.current_frame is None:
+            self.controller.set_status_led("error")
             messagebox.showwarning("Notice", "Camera is not ready yet.")
             return
 
+        self.controller.set_status_led("busy")
         self.scan_btn.config(state="disabled", text="✨ Analyzing...")
         self.results_box.delete("1.0", tk.END)
         self.results_box.insert("1.0", "Querying AI Vision Pipeline...\n")
@@ -767,6 +837,7 @@ class VisionAnalyzerView(tk.Frame):
         output_logs = []
         package_detected = "Unknown"
         part_detected = "Undetermined"
+        scan_succeeded = False
         
         try:
             ai_result = self._query_ai_vision(frame_rgb)
@@ -780,6 +851,7 @@ class VisionAnalyzerView(tk.Frame):
                         package_detected = pkg.upper()
                         break
                 part_detected = "Identified"
+                scan_succeeded = True
             else:
                 import pytesseract
                 gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
@@ -791,6 +863,7 @@ class VisionAnalyzerView(tk.Frame):
                 output_logs.append("=== LOCAL VISION REPORT ===")
                 if lines:
                     part_detected = lines[0]
+                    scan_succeeded = True
                     output_logs.append("\n=== OCR TEXT / PART NO. ===")
                     for line in lines:
                         output_logs.append(f"• {line}")
@@ -801,6 +874,7 @@ class VisionAnalyzerView(tk.Frame):
             self.controller.log_test_result("Optical Identifier", "Scan completed")
         except Exception as e:
             report_text = f"Inference Error: {e}"
+            scan_succeeded = False
 
         def update_gui():
             self.kpi_package.config(text=package_detected)
@@ -808,6 +882,7 @@ class VisionAnalyzerView(tk.Frame):
             self.results_box.delete("1.0", tk.END)
             self.results_box.insert("1.0", report_text)
             self.scan_btn.config(state="normal", text="✨ Execute AI Analysis")
+            self.controller.set_status_led("success" if scan_succeeded else "error")
 
         self.after(0, update_gui)
 
@@ -843,12 +918,17 @@ class TransistorCheckerView(tk.Frame):
         test_btn.pack(anchor="w")
 
     def execute_transistor_test(self):
+        self.controller.set_status_led("busy")
         self.result_box.delete("1.0", tk.END)
         self.result_box.insert(tk.END, "Interrogating ADC bus across pin combinations...\n")
         def run_thread():
             res_text = self.controller.run_hardware_transistor_test()
             self.controller.log_test_result("Transistor", res_text)
-            self.after(0, lambda: self.result_box.insert(tk.END, f"\n{res_text}\n"))
+            passed = "PASSED" in res_text
+            def finish():
+                self.result_box.insert(tk.END, f"\n{res_text}\n")
+                self.controller.set_status_led("success" if passed else "error")
+            self.after(0, finish)
         threading.Thread(target=run_thread, daemon=True).start()
 
 
@@ -880,13 +960,17 @@ class CapacitorAnalyzerView(tk.Frame):
         test_btn.pack(anchor="w")
 
     def execute_capacitor_test(self):
+        self.controller.set_status_led("busy")
         self.result_box.delete("1.0", tk.END)
         self.result_box.insert(tk.END, "Charging RC timing network...\n")
         def run_thread():
             time.sleep(0.8)
             res = "\nMEASUREMENT COMPLETE\nCapacitance: 470.2 µF\nNominal ESR: 0.12 Ω\n"
             self.controller.log_test_result("Capacitor", "Measured 470.2uF")
-            self.after(0, lambda: self.result_box.insert(tk.END, res))
+            def finish():
+                self.result_box.insert(tk.END, res)
+                self.controller.set_status_led("success")
+            self.after(0, finish)
         threading.Thread(target=run_thread, daemon=True).start()
 
 
@@ -984,7 +1068,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.2.0 (Stable)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.3.0 (RGB Status Telemetry)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
@@ -993,6 +1077,7 @@ class SettingsView(tk.Frame):
                   relief="flat", padx=10, pady=4, cursor="hand2", command=self.trigger_software_update).pack(anchor="w")
 
     def trigger_software_update(self):
+        self.controller.set_status_led("busy")
         self.update_status_lbl.config(text="Checking remote origin...", fg=AMBER)
         def run_update_thread():
             try:
@@ -1003,11 +1088,14 @@ class SettingsView(tk.Frame):
                 
                 if local != remote:
                     subprocess.run(["git", "-C", repo_dir, "reset", "--hard", "origin/main"], check=True, capture_output=True)
+                    self.after(0, lambda: self.controller.set_status_led("success"))
                     self.after(0, lambda: messagebox.showinfo("Update", "Applied latest update! Restarting..."))
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 else:
+                    self.after(0, lambda: self.controller.set_status_led("idle"))
                     self.after(0, lambda: self.update_status_lbl.config(text="Firmware up to date.", fg=EMERALD))
             except Exception as e:
+                self.after(0, lambda: self.controller.set_status_led("error"))
                 self.after(0, lambda: self.update_status_lbl.config(text=f"Failed: {e}", fg=ROSE))
         threading.Thread(target=run_update_thread, daemon=True).start()
 
