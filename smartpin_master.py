@@ -9,6 +9,7 @@ import json
 import socket
 import traceback
 import re
+import io
 from datetime import datetime
 from PIL import Image, ImageTk
 
@@ -124,6 +125,9 @@ class SmartPinMasterApp(tk.Tk):
         
         self.test_logs = []
         self.frames = {}
+        self.gpio_states = {21: False, 25: False}
+        self.last_vision_data = None
+        self.last_transistor_result = None
         
         load_gemini_api_key()
         
@@ -237,6 +241,7 @@ class SmartPinMasterApp(tk.Tk):
                 for pin in self.led_pins:
                     GPIO.setup(pin, GPIO.OUT)
                     GPIO.output(pin, GPIO.LOW)
+                    self.gpio_states[pin] = False
             except Exception as e:
                 print(f"LED GPIO Setup Error: {e}")
 
@@ -294,6 +299,7 @@ class SmartPinMasterApp(tk.Tk):
         self.rgb_anim_id = self.after(180, lambda: self._flash_error_loop(remaining_steps - 1))
 
     def set_led_state(self, pin, state):
+        self.gpio_states[pin] = bool(state)
         if HARDWARE_AVAILABLE:
             try:
                 GPIO.output(pin, GPIO.HIGH if state else GPIO.LOW)
@@ -319,7 +325,7 @@ class SmartPinMasterApp(tk.Tk):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         log_entry = {"time": timestamp, "module": module_name, "details": details}
         self.test_logs.insert(0, log_entry)
-        if len(self.test_logs) > 50:
+        if len(self.test_logs) > 80:
             self.test_logs.pop()
 
     def get_system_network_info(self):
@@ -346,6 +352,48 @@ class SmartPinMasterApp(tk.Tk):
         except Exception:
             pass
         return hostname, ip_address, ssid
+
+    def get_system_vitals(self):
+        host, ip, ssid = self.get_system_network_info()
+        cpu_temp = "--"
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                cpu_temp = f"{int(f.read().strip()) / 1000.0:.1f}°C"
+        except Exception:
+            pass
+
+        mem_pct = "--"
+        try:
+            with open("/proc/meminfo", "r") as f:
+                lines = f.readlines()
+            info = {l.split(":")[0]: int(l.split(":")[1].strip().split()[0]) for l in lines[:5]}
+            used = info["MemTotal"] - info["MemAvailable"]
+            mem_pct = f"{int((used / info['MemTotal']) * 100)}% ({used // 1024}MB)"
+        except Exception:
+            pass
+
+        uptime_str = "--"
+        try:
+            with open("/proc/uptime", "r") as f:
+                secs = int(float(f.read().split()[0]))
+            hrs, rem = divmod(secs, 3600)
+            mins, _ = divmod(rem, 60)
+            uptime_str = f"{hrs}h {mins}m"
+        except Exception:
+            pass
+
+        return {
+            "hostname": host,
+            "ip": ip,
+            "ssid": ssid,
+            "cpu_temp": cpu_temp,
+            "memory": mem_pct,
+            "uptime": uptime_str,
+            "hardware_ready": HARDWARE_AVAILABLE,
+            "camera_ready": PICAM2_AVAILABLE,
+            "api_key_ready": bool(load_gemini_api_key()),
+            "gpio": {str(k): v for k, v in self.gpio_states.items()}
+        }
 
     def run_hardware_transistor_test(self):
         mux1_pins = [4, 5, 6]  # Low-side GND Cathode sink
@@ -386,15 +434,21 @@ class SmartPinMasterApp(tk.Tk):
                             readings[(p1, p2)] = v
 
                 if not readings:
-                    return "ERROR: ADS1115 ADC read failed on I2C bus."
+                    res = "ERROR: ADS1115 ADC read failed on I2C bus."
+                    self.last_transistor_result = res
+                    return res
 
                 active_junctions = [v for v in readings.values() if 0.35 < v < 2.2]
                 if not active_junctions:
-                    return "EMPTY: No component seated in ZIF socket."
+                    res = "EMPTY: No component seated in ZIF socket."
+                    self.last_transistor_result = res
+                    return res
 
                 shorted_count = sum(1 for v in readings.values() if v < 0.01)
                 if shorted_count >= 4:
-                    return "FAULT: Short circuit detected between pins."
+                    res = "FAULT: Short circuit detected between pins."
+                    self.last_transistor_result = res
+                    return res
 
                 def is_conducting(v):
                     return 0.35 < v < 2.2
@@ -442,94 +496,137 @@ class SmartPinMasterApp(tk.Tk):
                     except Exception:
                         pass
 
-                    return f"PASSED: {found_type} BJT | B: Pin {match_pin_b} • C: Pin {match_pin_c} • E: Pin {match_pin_e} | hFE: {hfe_val}"
+                    res = f"PASSED: {found_type} BJT | B: Pin {match_pin_b} • C: Pin {match_pin_c} • E: Pin {match_pin_e} | hFE: {hfe_val}"
+                    self.last_transistor_result = res
+                    return res
                 else:
                     debug_str = ", ".join([f"{k[0]}->{k[1]}:{v:.2f}V" for k, v in sorted(readings.items())])
-                    return f"INDETERMINATE: Unrecognized pinout ({debug_str})"
+                    res = f"INDETERMINATE: Unrecognized pinout ({debug_str})"
+                    self.last_transistor_result = res
+                    return res
             except Exception as e:
-                return f"Hardware Exception: {e}"
+                res = f"Hardware Exception: {e}"
+                self.last_transistor_result = res
+                return res
         else:
-            return "ERROR: Hardware bus unavailable (Simulation Mode)."
+            res = "ERROR: Hardware bus unavailable (Simulation Mode)."
+            self.last_transistor_result = res
+            return res
+
+    def capture_or_grab_frame(self):
+        """Grabs current active frame from VisionAnalyzerView or captures a fresh snapshot."""
+        vision_view = self.frames.get("VisionAnalyzerView")
+        if vision_view and vision_view.current_frame is not None:
+            return vision_view.current_frame.copy(), None
+
+        try:
+            from picamera2 import Picamera2 as _Picam
+            cam = _Picam()
+            config = cam.create_still_configuration(main={"size": (1280, 720), "format": "RGB888"})
+            cam.configure(config)
+            cam.start()
+            time.sleep(0.35)
+            try:
+                cam.set_controls({"AfMode": 2, "AfRange": 2})
+                time.sleep(0.25)
+            except Exception:
+                pass
+            frame = cam.capture_array()
+            cam.stop()
+            cam.close()
+            return frame, None
+        except Exception as e:
+            return None, str(e)
+
+    def run_remote_vision_analysis(self):
+        frame_rgb, cam_err = self.capture_or_grab_frame()
+        if frame_rgb is None:
+            return {"identified": False, "error": f"Camera unavailable: {cam_err}"}
+
+        vision_view = self.frames.get("VisionAnalyzerView")
+        if vision_view:
+            data, err = vision_view._query_ai_vision_structured(frame_rgb)
+            if data:
+                self.last_vision_data = data
+                if data.get("identified"):
+                    self.log_test_result("Optical Identifier", f"Web AI: {data.get('part_number', 'Component')}")
+                return data
+            return {"identified": False, "error": err or "Unrecognized component"}
+        return {"identified": False, "error": "Vision pipeline not initialized"}
 
     def start_iot_server(self):
         app_instance = self
         try:
-            from http.server import HTTPServer, BaseHTTPRequestHandler
+            from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
             import urllib.parse
             
             class IoTHandler(BaseHTTPRequestHandler):
+                def _send_json(self, payload, status=200):
+                    body = json.dumps(payload).encode("utf-8")
+                    self.send_response(status)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+
                 def do_GET(self):
                     parsed_path = urllib.parse.urlparse(self.path)
                     path = parsed_path.path
                     query_params = urllib.parse.parse_qs(parsed_path.query)
                     
                     if path in ['/', '/index.html']:
+                        html_bytes = WEB_COMMAND_CENTER_HTML.encode("utf-8")
                         self.send_response(200)
-                        self.send_header("Content-type", "text/html")
+                        self.send_header("Content-Type", "text/html; charset=utf-8")
+                        self.send_header("Content-Length", str(len(html_bytes)))
                         self.end_headers()
-                        html_content = """
-                        <!DOCTYPE html>
-                        <html>
-                        <head>
-                            <title>SmartPin IoT Hub</title>
-                            <meta name="viewport" content="width=device-width, initial-scale=1">
-                            <style>
-                                body { font-family: -apple-system, system-ui, sans-serif; background: #0b0f19; color: #f8fafc; margin: 0; padding: 24px; }
-                                .container { max-width: 820px; margin: auto; }
-                                h1 { font-size: 20px; font-weight: 700; color: #38bdf8; letter-spacing: -0.5px; }
-                                .card { background: #111827; border: 1px solid #1f2937; border-radius: 12px; padding: 20px; margin-bottom: 20px; }
-                                button { background: #0284c7; color: white; border: none; padding: 10px 18px; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; margin-right: 8px; }
-                                button:hover { opacity: 0.9; }
-                                table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 13px; }
-                                th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #1f2937; }
-                                th { color: #94a3b8; font-weight: 600; }
-                                pre { background: #090d16; padding: 12px; border-radius: 8px; border: 1px solid #1f2937; color: #34d399; font-size: 12px; }
-                            </style>
-                        </head>
-                        <body>
-                            <div class="container">
-                                <h1>SmartPin Telemetry Bridge</h1>
-                                <div class="card">
-                                    <button onclick="triggerTest('transistor')">Transistor Scan</button>
-                                    <button onclick="triggerTest('i2c')">Scan I2C</button>
-                                    <pre id="output">System operational. Awaiting remote triggers...</pre>
-                                </div>
-                                <div class="card">
-                                    <table><thead><tr><th>Time</th><th>Module</th><th>Diagnostics</th></tr></thead><tbody id="logTable"></tbody></table>
-                                </div>
-                            </div>
-                            <script>
-                                function fetchLogs() {
-                                    fetch('/logs').then(r=>r.json()).then(d=>{
-                                        let h=''; d.forEach(l=>{ h+=`<tr><td>${l.time}</td><td><b>${l.module}</b></td><td>${l.details}</td></tr>`; });
-                                        document.getElementById('logTable').innerHTML=h;
-                                    });
-                                }
-                                function triggerTest(t) {
-                                    document.getElementById('output').innerText = "Querying hardware bus...";
-                                    fetch('/run?type='+t).then(r=>r.json()).then(d=>{
-                                        document.getElementById('output').innerText = d.result; fetchLogs();
-                                    });
-                                }
-                                setInterval(fetchLogs, 4000); fetchLogs();
-                            </script>
-                        </body></html>
-                        """
-                        self.wfile.write(html_content.encode("utf-8"))
+                        self.wfile.write(html_bytes)
+
+                    elif path == '/api/status':
+                        self._send_json({
+                            "vitals": app_instance.get_system_vitals(),
+                            "logs": app_instance.test_logs,
+                            "last_transistor": app_instance.last_transistor_result,
+                            "last_vision": app_instance.last_vision_data
+                        })
+
                     elif path == '/logs':
+                        self._send_json(app_instance.test_logs)
+
+                    elif path == '/api/snapshot':
+                        frame_rgb, err = app_instance.capture_or_grab_frame()
+                        if frame_rgb is None:
+                            self._send_json({"error": err or "No frame"}, status=503)
+                            return
+                        pil_img = Image.fromarray(frame_rgb)
+                        pil_img.thumbnail((800, 600), Image.Resampling.BILINEAR)
+                        buf = io.BytesIO()
+                        pil_img.save(buf, format="JPEG", quality=82)
+                        img_bytes = buf.getvalue()
                         self.send_response(200)
-                        self.send_header("Content-type", "application/json")
+                        self.send_header("Content-Type", "image/jpeg")
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Content-Length", str(len(img_bytes)))
                         self.end_headers()
-                        self.wfile.write(json.dumps(app_instance.test_logs).encode("utf-8"))
+                        self.wfile.write(img_bytes)
+
                     elif path == '/run':
                         test_type = query_params.get('type', [''])[0]
-                        res = "[System] Error: Unknown remote command"
                         app_instance.after(0, lambda: app_instance.set_status_led("busy"))
+
                         if test_type == 'transistor':
                             res = app_instance.run_hardware_transistor_test()
-                            app_instance.log_test_result("Transistor Module", f"Remote: {res}")
-                            status = "success" if "PASSED" in res else "error"
-                            app_instance.after(0, lambda s=status: app_instance.set_status_led(s))
+                            app_instance.log_test_result("Transistor Module", f"Web: {res}")
+                            passed = "PASSED" in res
+                            app_instance.after(0, lambda s=("success" if passed else "error"): app_instance.set_status_led(s))
+                            self._send_json({"result": res, "passed": passed})
+
+                        elif test_type == 'vision':
+                            data = app_instance.run_remote_vision_analysis()
+                            ok = bool(data.get("identified"))
+                            app_instance.after(0, lambda s=("success" if ok else "error"): app_instance.set_status_led(s))
+                            self._send_json({"vision": data, "passed": ok})
+
                         elif test_type == 'i2c':
                             try:
                                 res = subprocess.check_output(["i2cdetect", "-y", "1"]).decode()
@@ -537,23 +634,582 @@ class SmartPinMasterApp(tk.Tk):
                             except Exception as e:
                                 res = str(e)
                                 app_instance.after(0, lambda: app_instance.set_status_led("error"))
-                            app_instance.log_test_result("I2C Subsystem", "Bus interrogated")
+                            app_instance.log_test_result("I2C Subsystem", "Web: Bus interrogated")
+                            self._send_json({"result": res})
+
+                        elif test_type == 'gpio':
+                            pin = int(query_params.get('pin', ['21'])[0])
+                            state = query_params.get('state', ['0'])[0] == '1'
+                            ok = app_instance.set_led_state(pin, state)
+                            app_instance.log_test_result("GPIO Hub", f"Web: GPIO {pin} -> {'HIGH' if state else 'LOW'}")
+                            app_instance.after(0, lambda: app_instance.set_status_led("idle"))
+                            self._send_json({"pin": pin, "state": state, "ok": ok})
+
+                        elif test_type == 'rgb':
+                            mode = query_params.get('mode', ['idle'])[0]
+                            app_instance.after(0, lambda m=mode: app_instance.set_status_led(m))
+                            app_instance.log_test_result("Status RGB", f"Web: Set LED mode '{mode}'")
+                            self._send_json({"mode": mode, "ok": True})
+
+                        elif test_type == 'clear_logs':
+                            app_instance.test_logs.clear()
+                            app_instance.after(0, lambda: app_instance.set_status_led("idle"))
+                            self._send_json({"cleared": True})
+
                         else:
                             app_instance.after(0, lambda: app_instance.set_status_led("error"))
-                        self.send_response(200)
-                        self.send_header("Content-type", "application/json")
-                        self.end_headers()
-                        self.wfile.write(json.dumps({"result": res}).encode("utf-8"))
+                            self._send_json({"result": "Unknown command"}, status=400)
                     else:
                         self.send_response(404)
                         self.end_headers()
-                def log_message(self, format, *args): pass
 
-            server = HTTPServer(('0.0.0.0', 5000), IoTHandler)
+                def log_message(self, format, *args):
+                    pass
+
+            server = ThreadingHTTPServer(('0.0.0.0', 5000), IoTHandler)
             threading.Thread(target=server.serve_forever, daemon=True).start()
         except Exception as e:
             print(f"IoT Server Error: {e}")
             self.set_status_led("error")
+
+
+# ==============================================================================
+# ADVANCED WEB TELEMETRY & COMMAND CENTER UI (PORT 5000)
+# ==============================================================================
+WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SmartPin Studio OS • Command Center</title>
+<style>
+  :root {
+    --bg: #070b14;
+    --surface: #0f172a;
+    --surface-alt: #1e293b;
+    --border: #1e293b;
+    --text: #f8fafc;
+    --muted: #94a3b8;
+    --cyan: #06b6d4;
+    --blue: #3b82f6;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+  }
+  header {
+    background: rgba(15, 23, 42, 0.92);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 10px; }
+  .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: var(--emerald);
+    box-shadow: 0 0 10px var(--emerald);
+  }
+  .brand h1 { font-size: 17px; margin: 0; letter-spacing: 0.4px; }
+  .brand span { color: var(--cyan); font-weight: 700; font-size: 12px; margin-left: 4px; }
+  .vitals-bar { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }
+  .pill {
+    background: var(--surface-alt);
+    border: 1px solid #334155;
+    padding: 4px 10px;
+    border-radius: 999px;
+    color: var(--muted);
+  }
+  .pill b { color: var(--text); }
+  main { max-width: 1280px; margin: 0 auto; padding: 20px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+  .tab-btn {
+    background: var(--surface);
+    color: var(--muted);
+    border: 1px solid var(--border);
+    padding: 9px 16px;
+    border-radius: 10px;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    transition: 0.15s;
+  }
+  .tab-btn.active {
+    background: linear-gradient(135deg, var(--cyan), var(--blue));
+    color: #fff;
+    border-color: transparent;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+    gap: 18px;
+  }
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.28);
+  }
+  .card-hdr {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+  .card-title { font-size: 12px; font-weight: 700; letter-spacing: 0.8px; color: var(--muted); text-transform: uppercase; }
+  .badge {
+    font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 6px;
+    background: var(--surface-alt); color: var(--cyan);
+  }
+  .badge.ok { background: rgba(16,185,129,0.18); color: var(--emerald); }
+  .badge.err { background: rgba(244,63,94,0.18); color: var(--rose); }
+  .badge.warn { background: rgba(245,158,11,0.18); color: var(--amber); }
+  .btn-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  button.action {
+    background: var(--blue);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 15px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button.action.cyan { background: var(--cyan); }
+  button.action.emerald { background: var(--emerald); }
+  button.action.rose { background: var(--rose); }
+  button.action.amber { background: var(--amber); color: #090d16; }
+  button.action.ghost { background: var(--surface-alt); color: var(--text); border: 1px solid #334155; }
+  button.action:disabled { opacity: 0.5; cursor: wait; }
+
+  /* ZIF Socket 3-Pin Grid */
+  .zif-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
+  .zif-pin {
+    background: #090e1a;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 12px;
+    text-align: center;
+  }
+  .zif-pin .num { font-family: monospace; font-size: 11px; color: var(--muted); }
+  .zif-pin .role { font-size: 15px; font-weight: 800; margin: 4px 0; color: var(--text); }
+  .zif-pin .desc { font-size: 11px; color: var(--muted); }
+
+  /* Vision & Datasheet */
+  .cam-box {
+    background: #050811;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    overflow: hidden;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 220px;
+  }
+  .cam-box img { width: 100%; height: auto; display: block; }
+  .pin-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+  .pin-item {
+    background: #090e1a; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 10px;
+  }
+  .pin-item b { color: var(--cyan); font-family: monospace; }
+  .specs-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 8px; }
+  .spec-cell { background: #090e1a; border: 1px solid #1e293b; border-radius: 8px; padding: 8px 10px; }
+  .spec-cell .k { font-size: 11px; color: var(--muted); }
+  .spec-cell .v { font-family: monospace; font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; }
+
+  /* Console & Table */
+  pre.term {
+    background: #050811;
+    border: 1px solid #1e293b;
+    border-radius: 10px;
+    padding: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 12px;
+    color: #34d399;
+    overflow-x: auto;
+    margin: 10px 0 0 0;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; }
+  .section { display: none; }
+  .section.active { display: block; }
+
+  /* Modal Datasheet */
+  .modal-backdrop {
+    display: none; position: fixed; inset: 0; background: rgba(2,6,23,0.85);
+    z-index: 100; padding: 24px; overflow-y: auto;
+  }
+  .modal-card {
+    max-width: 820px; margin: 0 auto; background: var(--surface);
+    border: 1px solid var(--blue); border-radius: 14px; padding: 24px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <div class="dot"></div>
+    <h1>SMARTPIN <span>STUDIO OS • WEB COMMAND CENTER</span></h1>
+  </div>
+  <div class="vitals-bar">
+    <div class="pill">Host: <b id="vHost">--</b></div>
+    <div class="pill">Wi-Fi: <b id="vSsid">--</b> (<b id="vIp">--</b>)</div>
+    <div class="pill">CPU: <b id="vTemp">--</b></div>
+    <div class="pill">RAM: <b id="vMem">--</b></div>
+    <div class="pill">Uptime: <b id="vUp">--</b></div>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('workbench', this)">⚡ Workbench & Vision AI</button>
+    <button class="tab-btn" onclick="switchTab('gpio', this)">🎛 GPIO & Bus Diagnostics</button>
+    <button class="tab-btn" onclick="switchTab('logs', this)">📜 Telemetry Logs</button>
+  </div>
+
+  <!-- TAB 1: WORKBENCH & VISION AI -->
+  <div id="tab-workbench" class="section active">
+    <div class="grid">
+      <!-- TRANSISTOR ANALYZER CARD -->
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">Tri-Channel BJT Analyzer</span>
+          <span id="bjtBadge" class="badge">STANDBY</span>
+        </div>
+        <h2 id="bjtTitle" style="margin:0 0 4px 0; font-size:19px;">Ready for ZIF Sweep</h2>
+        <p id="bjtSub" style="margin:0; font-size:13px; color:var(--muted);">Seat NPN or PNP transistor in ZIF Pins 0, 1, and 2.</p>
+
+        <div class="zif-grid">
+          <div class="zif-pin" id="pinCard0"><div class="num">ZIF PIN 0</div><div class="role">--</div><div class="desc">Awaiting</div></div>
+          <div class="zif-pin" id="pinCard1"><div class="num">ZIF PIN 1</div><div class="role">--</div><div class="desc">Awaiting</div></div>
+          <div class="zif-pin" id="pinCard2"><div class="num">ZIF PIN 2</div><div class="role">--</div><div class="desc">Awaiting</div></div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:12px; border-top:1px solid var(--border);">
+          <span style="font-size:12px; color:var(--muted); font-weight:700;">ESTIMATED DC GAIN (hFE)</span>
+          <span id="bjtHfe" style="font-family:monospace; font-size:16px; font-weight:800; color:var(--cyan);">--</span>
+        </div>
+
+        <div class="btn-row">
+          <button id="btnBjt" class="action" onclick="runTransistor()">⚡ Run Component Sweep</button>
+        </div>
+      </div>
+
+      <!-- OPTICAL VISION AI CARD -->
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">IMX708 Optical Vision AI</span>
+          <span id="visBadge" class="badge">READY</span>
+        </div>
+        <div class="cam-box">
+          <img id="camPreview" src="/api/snapshot" alt="IMX708 Live Snapshot" onerror="this.alt='Camera standby — click Refresh Frame or Execute AI Scan'">
+        </div>
+        <div class="btn-row">
+          <button id="btnVis" class="action cyan" onclick="runVision()">✨ Execute AI Analysis</button>
+          <button class="action ghost" onclick="refreshCam()">📷 Refresh Frame</button>
+          <button id="btnSheet" class="action ghost" style="display:none;" onclick="openModal()">📄 Full Datasheet</button>
+        </div>
+
+        <div id="visionOutput" style="margin-top:14px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 2: GPIO & BUS DIAGNOSTICS -->
+  <div id="tab-gpio" class="section">
+    <div class="grid">
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">GPIO Digital Signal Hub</span>
+          <span class="badge">BCM PINS 21 & 25</span>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; background:#090e1a; padding:12px; border-radius:10px; border:1px solid #1e293b;">
+            <div>
+              <b>LINE 1 (GPIO 21)</b>
+              <div id="g21State" style="font-size:12px; color:var(--muted);">State: LOW</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="action emerald" onclick="setGpio(21, 1)">HIGH</button>
+              <button class="action rose" onclick="setGpio(21, 0)">LOW</button>
+            </div>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; background:#090e1a; padding:12px; border-radius:10px; border:1px solid #1e293b;">
+            <div>
+              <b>LINE 2 (GPIO 25)</b>
+              <div id="g25State" style="font-size:12px; color:var(--muted);">State: LOW</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button class="action emerald" onclick="setGpio(25, 1)">HIGH</button>
+              <button class="action rose" onclick="setGpio(25, 0)">LOW</button>
+            </div>
+          </div>
+        </div>
+
+        <div style="margin-top:16px;">
+          <div class="card-title" style="margin-bottom:8px;">Common-Anode RGB Status Indicator</div>
+          <div class="btn-row">
+            <button class="action cyan" onclick="setRgb('idle')">Idle (Cyan)</button>
+            <button class="action amber" onclick="setRgb('busy')">Busy (Pulse)</button>
+            <button class="action emerald" onclick="setRgb('success')">Success (Green)</button>
+            <button class="action rose" onclick="setRgb('error')">Error (Red)</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-hdr">
+          <span class="card-title">I2C Bus & ADS1115 Matrix</span>
+          <span class="badge">BUS 1 (0x48)</span>
+        </div>
+        <p style="margin:0; font-size:13px; color:var(--muted);">Interrogate hardware I2C bus addresses and verify ADS1115 16-bit ADC connectivity.</p>
+        <div class="btn-row">
+          <button class="action" onclick="runI2c()">🔍 Scan I2C Bus</button>
+        </div>
+        <pre id="i2cOut" class="term">Awaiting I2C bus scan...</pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- TAB 3: TELEMETRY LOGS -->
+  <div id="tab-logs" class="section">
+    <div class="card">
+      <div class="card-hdr">
+        <span class="card-title">Live Hardware & AI Telemetry Stream</span>
+        <div style="display:flex; gap:8px;">
+          <button class="action ghost" onclick="exportLogs()">⬇ Export JSON</button>
+          <button class="action rose" onclick="clearLogs()">Clear Logs</button>
+        </div>
+      </div>
+      <table>
+        <thead><tr><th>Timestamp</th><th>Subsystem</th><th>Diagnostic Event</th></tr></thead>
+        <tbody id="logTable"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<!-- FULL DATASHEET MODAL -->
+<div id="dsModal" class="modal-backdrop" onclick="if(event.target===this) closeModal()">
+  <div class="modal-card">
+    <div style="display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid var(--border); padding-bottom:12px; margin-bottom:16px;">
+      <h2 id="mTitle" style="margin:0; font-size:18px; color:var(--cyan);">TECHNICAL DATASHEET</h2>
+      <button class="action rose" onclick="closeModal()">✕ Close</button>
+    </div>
+    <div id="mBody" style="font-size:13px; line-height:1.6;"></div>
+  </div>
+</div>
+
+<script>
+let cachedLogs = [];
+let cachedVision = null;
+
+function switchTab(id, btn) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + id).classList.add('active');
+  btn.classList.add('active');
+}
+
+function refreshCam() {
+  document.getElementById('camPreview').src = '/api/snapshot?t=' + Date.now();
+}
+
+function parseTransistor(res) {
+  const badge = document.getElementById('bjtBadge');
+  const title = document.getElementById('bjtTitle');
+  const sub = document.getElementById('bjtSub');
+  const hfe = document.getElementById('bjtHfe');
+
+  if (!res) return;
+  if (res.startsWith('PASSED:')) {
+    badge.className = 'badge ok';
+    badge.innerText = 'PASSED';
+    const typeMatch = res.match(/PASSED:\s*(\w+\s+BJT)/);
+    const pinMatch = res.match(/B:\s*Pin\s*(\d+)\s*•\s*C:\s*Pin\s*(\d+)\s*•\s*E:\s*Pin\s*(\d+)/);
+    const hfeMatch = res.match(/hFE:\s*(\d+)/);
+
+    title.innerText = typeMatch ? typeMatch[1] + ' Verified' : 'BJT Verified';
+    sub.innerText = 'Forward & reverse PN junctions confirmed across multiplexer.';
+    hfe.innerText = hfeMatch ? hfeMatch[1] + ' hFE' : '--';
+
+    const roles = {0: ['--', 'No junction', '#94a3b8'], 1: ['--', 'No junction', '#94a3b8'], 2: ['--', 'No junction', '#94a3b8']};
+    if (pinMatch) {
+      roles[parseInt(pinMatch[1])] = ['BASE (B)', 'Control junction', '#06b6d4'];
+      roles[parseInt(pinMatch[2])] = ['COLLECTOR (C)', 'Current path', '#10b981'];
+      roles[parseInt(pinMatch[3])] = ['EMITTER (E)', 'Reference lead', '#f59e0b'];
+    }
+    [0, 1, 2].forEach(i => {
+      const card = document.getElementById('pinCard' + i);
+      card.style.borderColor = roles[i][2];
+      card.innerHTML = `<div class="num">ZIF PIN ${i}</div><div class="role" style="color:${roles[i][2]}">${roles[i][0]}</div><div class="desc">${roles[i][1]}</div>`;
+    });
+  } else {
+    badge.className = 'badge err';
+    badge.innerText = res.split(':')[0];
+    title.innerText = res.split(':')[0];
+    sub.innerText = res.split(':').slice(1).join(':').trim();
+    hfe.innerText = '--';
+  }
+}
+
+function renderVision(v) {
+  if (!v) return;
+  cachedVision = v;
+  const badge = document.getElementById('visBadge');
+  const out = document.getElementById('visionOutput');
+  const sheetBtn = document.getElementById('btnSheet');
+
+  if (!v.identified) {
+    badge.className = 'badge err';
+    badge.innerText = 'UNIDENTIFIED';
+    sheetBtn.style.display = 'none';
+    out.innerHTML = `<div class="pin-item" style="border-color:var(--rose);"><b>Scan Notice:</b> ${v.error || v.function_summary || 'No component detected.'}</div>`;
+    return;
+  }
+
+  badge.className = 'badge ok';
+  badge.innerText = v.package_type || 'IDENTIFIED';
+  sheetBtn.style.display = 'inline-block';
+
+  const pinsHtml = (v.pinouts || []).map(p =>
+    `<div class="pin-item"><b>PIN ${p.pin} • ${p.name}</b><div style="font-size:12px;color:var(--muted);margin-top:2px;">${p.description}</div></div>`
+  ).join('');
+
+  const specsHtml = (v.electrical_specs || []).map(s =>
+    `<div class="spec-cell"><div class="k">${s.parameter}</div><div class="v">${s.value}</div></div>`
+  ).join('');
+
+  out.innerHTML = `
+    <div style="background:#090e1a;border:1px solid var(--cyan);border-radius:10px;padding:12px;">
+      <div style="font-size:16px;font-weight:800;">${v.part_number} — ${v.component_name}</div>
+      <div style="font-size:12px;color:var(--muted);margin-top:4px;">${v.function_summary}</div>
+    </div>
+    ${pinsHtml ? `<div class="card-title" style="margin-top:12px;">Pinout Configuration</div><div class="pin-list">${pinsHtml}</div>` : ''}
+    ${specsHtml ? `<div class="card-title" style="margin-top:12px;">Electrical Ratings</div><div class="specs-grid">${specsHtml}</div>` : ''}
+  `;
+}
+
+function openModal() {
+  if (!cachedVision) return;
+  const v = cachedVision;
+  document.getElementById('mTitle').innerText = `${v.part_number} • ${v.component_name} (${v.package_type})`;
+  document.getElementById('mBody').innerHTML = `
+    <p><b>Category:</b> ${v.category || 'N/A'}</p>
+    <p><b>Description:</b> ${v.function_summary || 'N/A'}</p>
+    <h4 style="color:var(--amber);margin-bottom:4px;">Absolute Maximum Ratings</h4>
+    <p style="background:#090e1a;padding:10px;border-radius:8px;">${v.absolute_max_ratings || 'N/A'}</p>
+    <h4 style="color:var(--cyan);margin-bottom:4px;">Operating & Thermal Characteristics</h4>
+    <p style="background:#090e1a;padding:10px;border-radius:8px;">${v.operating_characteristics || 'N/A'}</p>
+    <h4 style="color:var(--emerald);margin-bottom:4px;">Typical Applications</h4>
+    <p style="background:#090e1a;padding:10px;border-radius:8px;">${v.typical_applications || 'N/A'}</p>
+  `;
+  document.getElementById('dsModal').style.display = 'block';
+}
+function closeModal() { document.getElementById('dsModal').style.display = 'none'; }
+
+async function runTransistor() {
+  const btn = document.getElementById('btnBjt');
+  btn.disabled = true; btn.innerText = '⚡ Sweeping Channels...';
+  try {
+    const r = await fetch('/run?type=transistor').then(x => x.json());
+    parseTransistor(r.result);
+    syncStatus();
+  } finally {
+    btn.disabled = false; btn.innerText = '⚡ Run Component Sweep';
+  }
+}
+
+async function runVision() {
+  const btn = document.getElementById('btnVis');
+  btn.disabled = true; btn.innerText = '✨ Analyzing Component...';
+  refreshCam();
+  try {
+    const r = await fetch('/run?type=vision').then(x => x.json());
+    renderVision(r.vision);
+    syncStatus();
+  } finally {
+    btn.disabled = false; btn.innerText = '✨ Execute AI Analysis';
+  }
+}
+
+async function runI2c() {
+  document.getElementById('i2cOut').innerText = 'Interrogating I2C bus 1...';
+  const r = await fetch('/run?type=i2c').then(x => x.json());
+  document.getElementById('i2cOut').innerText = r.result;
+  syncStatus();
+}
+
+async function setGpio(pin, state) {
+  await fetch(`/run?type=gpio&pin=${pin}&state=${state}`);
+  syncStatus();
+}
+
+async function setRgb(mode) {
+  await fetch(`/run?type=rgb&mode=${mode}`);
+  syncStatus();
+}
+
+async function clearLogs() {
+  await fetch('/run?type=clear_logs');
+  syncStatus();
+}
+
+function exportLogs() {
+  const blob = new Blob([JSON.stringify(cachedLogs, null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'smartpin_telemetry.json';
+  a.click();
+}
+
+async function syncStatus() {
+  try {
+    const data = await fetch('/api/status').then(r => r.json());
+    const v = data.vitals;
+    document.getElementById('vHost').innerText = v.hostname;
+    document.getElementById('vSsid').innerText = v.ssid;
+    document.getElementById('vIp').innerText = v.ip;
+    document.getElementById('vTemp').innerText = v.cpu_temp;
+    document.getElementById('vMem').innerText = v.memory;
+    document.getElementById('vUp').innerText = v.uptime;
+
+    document.getElementById('g21State').innerText = 'State: ' + (v.gpio['21'] ? 'HIGH (3.3V)' : 'LOW (0V)');
+    document.getElementById('g25State').innerText = 'State: ' + (v.gpio['25'] ? 'HIGH (3.3V)' : 'LOW (0V)');
+
+    if (data.last_transistor) parseTransistor(data.last_transistor);
+    if (data.last_vision && !cachedVision) renderVision(data.last_vision);
+
+    cachedLogs = data.logs || [];
+    document.getElementById('logTable').innerHTML = cachedLogs.map(l =>
+      `<tr><td style="font-family:monospace;color:var(--muted);">${l.time}</td><td><b>${l.module}</b></td><td>${l.details}</td></tr>`
+    ).join('');
+  } catch (e) {}
+}
+
+setInterval(syncStatus, 4000);
+syncStatus();
+</script>
+</body>
+</html>
+"""
 
 
 # ==============================================================================
@@ -840,6 +1496,7 @@ class VisionAnalyzerView(tk.Frame):
     def _render_structured_cards(self, data):
         self._clear_cards()
         self.last_structured_data = data
+        self.controller.last_vision_data = data
 
         # 1. COMPONENT IDENTITY CARD
         id_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=CYAN_ACCENT, highlightthickness=1, padx=10, pady=8)
@@ -855,7 +1512,7 @@ class VisionAnalyzerView(tk.Frame):
         tk.Label(id_card, text=comp_title, fg=TEXT_MAIN, bg=SURFACE_ALT, font=("Helvetica", 10, "bold"), wraplength=320, justify="left").pack(anchor="w", pady=(3, 2))
         tk.Label(id_card, text=data.get("function_summary", ""), fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=320, justify="left").pack(anchor="w")
 
-        # 2. PINOUT CONFIGURATION CARD (Optimized Stacked Layout)
+        # 2. PINOUT CONFIGURATION CARD
         pinouts = data.get("pinouts", [])
         if pinouts:
             pin_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=8)
@@ -873,7 +1530,7 @@ class VisionAnalyzerView(tk.Frame):
                 if desc_txt:
                     tk.Label(row, text=desc_txt, fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 8), wraplength=310, justify="left", anchor="w").pack(fill="x", pady=(1, 0))
 
-        # 3. KEY ELECTRICAL RATINGS CARD (Wrapped cells - No Edge Clipping)
+        # 3. KEY ELECTRICAL RATINGS CARD
         specs = data.get("electrical_specs", [])
         if specs:
             spec_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=8, pady=8)
@@ -1108,7 +1765,6 @@ class VisionAnalyzerView(tk.Frame):
         try:
             from google import genai
             from google.genai import types
-            import io
             
             pil_img = Image.fromarray(frame_rgb)
             pil_img.thumbnail((1024, 1024), Image.Resampling.BILINEAR)
@@ -1248,7 +1904,6 @@ class TransistorCheckerView(tk.Frame):
         body = tk.Frame(self, bg=BG_DARK)
         body.pack(fill="both", expand=True, padx=16, pady=12)
         
-        # Bottom Action Button
         btn_row = tk.Frame(body, bg=BG_DARK)
         btn_row.pack(side="bottom", fill="x", pady=(8, 0))
         
@@ -1258,7 +1913,6 @@ class TransistorCheckerView(tk.Frame):
                                   cursor="hand2", command=self.execute_transistor_test)
         self.test_btn.pack(fill="x")
 
-        # Cards Container
         self.cards_container = tk.Frame(body, bg=BG_DARK)
         self.cards_container.pack(side="top", fill="both", expand=True)
         
@@ -1271,7 +1925,6 @@ class TransistorCheckerView(tk.Frame):
     def _render_standby_cards(self):
         self._clear_cards()
         
-        # Top Identity Card
         id_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=12)
         id_card.pack(fill="x", pady=(0, 8))
         
@@ -1284,7 +1937,6 @@ class TransistorCheckerView(tk.Frame):
         tk.Label(id_card, text="Seat NPN or PNP transistor leads into ZIF Socket Pins 0, 1, and 2, then tap 'Run Component Sweep'.",
                  fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 9), wraplength=720, justify="left").pack(anchor="w")
 
-        # 3-Column ZIF Socket Preview Cards
         pin_grid = tk.Frame(self.cards_container, bg=BG_DARK)
         pin_grid.pack(fill="both", expand=True, pady=(0, 8))
         for idx in range(3):
@@ -1307,8 +1959,6 @@ class TransistorCheckerView(tk.Frame):
         badge_color = EMERALD if passed else (AMBER if is_empty else ROSE)
         border_color = EMERALD if passed else (AMBER if is_empty else ROSE)
 
-        # Parse structured values if passed:
-        # "PASSED: NPN BJT | B: Pin 1 • C: Pin 0 • E: Pin 2 | hFE: 215"
         bjt_type = "No Component Detected"
         subtitle = raw_result
         pin_roles = {0: ("--", "No junction"), 1: ("--", "No junction"), 2: ("--", "No junction")}
@@ -1334,7 +1984,6 @@ class TransistorCheckerView(tk.Frame):
                 bjt_type = parts[0].strip().title()
                 subtitle = parts[1].strip()
 
-        # 1. DEVICE CLASSIFICATION CARD
         id_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=border_color, highlightthickness=1, padx=14, pady=10)
         id_card.pack(fill="x", pady=(0, 8))
         
@@ -1346,7 +1995,6 @@ class TransistorCheckerView(tk.Frame):
         tk.Label(id_card, text=bjt_type, fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(3, 1))
         tk.Label(id_card, text=subtitle, fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8), wraplength=720, justify="left").pack(anchor="w")
 
-        # 2. 3-COLUMN PINOUT MAPPING CARDS
         pin_grid = tk.Frame(self.cards_container, bg=BG_DARK)
         pin_grid.pack(fill="both", expand=True, pady=(0, 8))
         
@@ -1370,7 +2018,6 @@ class TransistorCheckerView(tk.Frame):
             tk.Label(p_card, text=role_title, fg=accent, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(anchor="w", pady=(4, 2))
             tk.Label(p_card, text=role_desc, fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8)).pack(anchor="w")
 
-        # 3. GAIN & TELEMETRY SUMMARY CARD
         gain_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=8)
         gain_card.pack(fill="x")
         
@@ -1520,7 +2167,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.8.0 (Card-Based Transistor & Wrapped Ratings)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v2.0.0 (Full-Stack Web Command Center)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
