@@ -128,6 +128,8 @@ class SmartPinMasterApp(tk.Tk):
         self.gpio_states = {21: False, 25: False}
         self.last_vision_data = None
         self.last_transistor_result = None
+        self.shared_cam = None
+        self.camera_lock = threading.Lock()
         
         load_gemini_api_key()
         
@@ -513,30 +515,50 @@ class SmartPinMasterApp(tk.Tk):
             self.last_transistor_result = res
             return res
 
-    def capture_or_grab_frame(self):
-        """Grabs current active frame from VisionAnalyzerView or captures a fresh snapshot."""
-        vision_view = self.frames.get("VisionAnalyzerView")
-        if vision_view and vision_view.current_frame is not None:
-            return vision_view.current_frame.copy(), None
-
-        try:
-            from picamera2 import Picamera2 as _Picam
-            cam = _Picam()
-            config = cam.create_still_configuration(main={"size": (1280, 720), "format": "RGB888"})
-            cam.configure(config)
-            cam.start()
-            time.sleep(0.35)
+    def release_shared_camera(self):
+        if self.shared_cam is not None:
             try:
-                cam.set_controls({"AfMode": 2, "AfRange": 2})
-                time.sleep(0.25)
+                self.shared_cam.stop()
+                self.shared_cam.close()
             except Exception:
                 pass
-            frame = cam.capture_array()
-            cam.stop()
-            cam.close()
-            return frame, None
-        except Exception as e:
-            return None, str(e)
+            self.shared_cam = None
+
+    def capture_or_grab_frame(self):
+        """Thread-safe single-instance frame grabber shared by UI and Web Portal."""
+        vision_view = self.frames.get("VisionAnalyzerView")
+        if vision_view and vision_view.camera_ready and vision_view.current_frame is not None:
+            return vision_view.current_frame.copy(), None
+
+        with self.camera_lock:
+            if vision_view and vision_view.camera_ready and vision_view.current_frame is not None:
+                return vision_view.current_frame.copy(), None
+            try:
+                if self.shared_cam is None:
+                    from picamera2 import Picamera2 as _Picam
+                    cam = None
+                    for attempt in range(2):
+                        try:
+                            cam = _Picam()
+                            break
+                        except Exception:
+                            if attempt == 1:
+                                raise
+                            time.sleep(0.4)
+                    config = cam.create_preview_configuration(main={"size": (1280, 720), "format": "RGB888"})
+                    cam.configure(config)
+                    cam.start()
+                    time.sleep(0.25)
+                    try:
+                        cam.set_controls({"AfMode": 2, "AfRange": 2, "Sharpness": 1.5})
+                    except Exception:
+                        pass
+                    self.shared_cam = cam
+                frame = self.shared_cam.capture_array()
+                return frame, None
+            except Exception as e:
+                self.release_shared_camera()
+                return None, str(e)
 
     def run_remote_vision_analysis(self):
         frame_rgb, cam_err = self.capture_or_grab_frame()
@@ -798,7 +820,6 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
   button.action.ghost { background: var(--surface-alt); color: var(--text); border: 1px solid #334155; }
   button.action:disabled { opacity: 0.5; cursor: wait; }
 
-  /* ZIF Socket 3-Pin Grid */
   .zif-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 14px; }
   .zif-pin {
     background: #090e1a;
@@ -811,7 +832,6 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
   .zif-pin .role { font-size: 15px; font-weight: 800; margin: 4px 0; color: var(--text); }
   .zif-pin .desc { font-size: 11px; color: var(--muted); }
 
-  /* Vision & Datasheet */
   .cam-box {
     background: #050811;
     border: 1px solid #1e293b;
@@ -833,7 +853,6 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
   .spec-cell .k { font-size: 11px; color: var(--muted); }
   .spec-cell .v { font-family: monospace; font-size: 13px; font-weight: 700; color: var(--text); margin-top: 2px; }
 
-  /* Console & Table */
   pre.term {
     background: #050811;
     border: 1px solid #1e293b;
@@ -851,7 +870,6 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
   .section { display: none; }
   .section.active { display: block; }
 
-  /* Modal Datasheet */
   .modal-backdrop {
     display: none; position: fixed; inset: 0; background: rgba(2,6,23,0.85);
     z-index: 100; padding: 24px; overflow-y: auto;
@@ -887,7 +905,6 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
   <!-- TAB 1: WORKBENCH & VISION AI -->
   <div id="tab-workbench" class="section active">
     <div class="grid">
-      <!-- TRANSISTOR ANALYZER CARD -->
       <div class="card">
         <div class="card-hdr">
           <span class="card-title">Tri-Channel BJT Analyzer</span>
@@ -912,7 +929,6 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
         </div>
       </div>
 
-      <!-- OPTICAL VISION AI CARD -->
       <div class="card">
         <div class="card-hdr">
           <span class="card-title">IMX708 Optical Vision AI</span>
@@ -923,7 +939,7 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
         </div>
         <div class="btn-row">
           <button id="btnVis" class="action cyan" onclick="runVision()">✨ Execute AI Analysis</button>
-          <button class="action ghost" onclick="refreshCam()">📷 Refresh Frame</button>
+          <button id="btnSnap" class="action ghost" onclick="refreshCam()">📷 Refresh Frame</button>
           <button id="btnSheet" class="action ghost" style="display:none;" onclick="openModal()">📄 Full Datasheet</button>
         </div>
 
@@ -1020,6 +1036,7 @@ WEB_COMMAND_CENTER_HTML = """<!DOCTYPE html>
 <script>
 let cachedLogs = [];
 let cachedVision = null;
+let snapBusy = false;
 
 function switchTab(id, btn) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -1029,7 +1046,15 @@ function switchTab(id, btn) {
 }
 
 function refreshCam() {
-  document.getElementById('camPreview').src = '/api/snapshot?t=' + Date.now();
+  if (snapBusy) return;
+  snapBusy = true;
+  const btn = document.getElementById('btnSnap');
+  const img = document.getElementById('camPreview');
+  btn.disabled = true;
+  btn.innerText = '📷 Capturing...';
+  img.onload = () => { snapBusy = false; btn.disabled = false; btn.innerText = '📷 Refresh Frame'; };
+  img.onerror = () => { snapBusy = false; btn.disabled = false; btn.innerText = '📷 Refresh Frame'; };
+  img.src = '/api/snapshot?t=' + Date.now();
 }
 
 function parseTransistor(res) {
@@ -1140,10 +1165,10 @@ async function runTransistor() {
 async function runVision() {
   const btn = document.getElementById('btnVis');
   btn.disabled = true; btn.innerText = '✨ Analyzing Component...';
-  refreshCam();
   try {
     const r = await fetch('/run?type=vision').then(x => x.json());
     renderVision(r.vision);
+    refreshCam();
     syncStatus();
   } finally {
     btn.disabled = false; btn.innerText = '✨ Execute AI Analysis';
@@ -1670,28 +1695,39 @@ class VisionAnalyzerView(tk.Frame):
             self.picam2 = None
 
     def _start_camera_hardware(self):
-        try:
-            from picamera2 import Picamera2
-            cam = Picamera2()
-            config = cam.create_preview_configuration(main={"size": (1920, 1080), "format": "RGB888"})
-            cam.configure(config)
-            cam.start()
-            time.sleep(0.15)
+        with self.controller.camera_lock:
+            self.controller.release_shared_camera()
             try:
-                cam.set_controls({"AfMode": 2, "AfRange": 2, "Sharpness": 1.5})
-            except Exception: pass
-            
-            self.picam2 = cam
-            self.camera_ready = True
-            self.after(0, self._on_camera_started)
-        except Exception as e:
-            err_text = str(e)
-            self.after(0, lambda: self.controller.set_status_led("error"))
-            self.after(0, lambda: self.feed_status.config(text="● SENSOR ERROR", fg=ROSE))
-            self.after(0, lambda: self.video_label.config(text=f"Camera Error:\n{err_text[:100]}"))
+                from picamera2 import Picamera2
+                cam = None
+                for attempt in range(2):
+                    try:
+                        cam = Picamera2()
+                        break
+                    except Exception:
+                        if attempt == 1:
+                            raise
+                        time.sleep(0.4)
+                config = cam.create_preview_configuration(main={"size": (1280, 720), "format": "RGB888"})
+                cam.configure(config)
+                cam.start()
+                time.sleep(0.15)
+                try:
+                    cam.set_controls({"AfMode": 2, "AfRange": 2, "Sharpness": 1.5})
+                except Exception:
+                    pass
+                
+                self.picam2 = cam
+                self.camera_ready = True
+                self.after(0, self._on_camera_started)
+            except Exception as e:
+                err_text = str(e)
+                self.after(0, lambda: self.controller.set_status_led("error"))
+                self.after(0, lambda: self.feed_status.config(text="● SENSOR ERROR", fg=ROSE))
+                self.after(0, lambda: self.video_label.config(text=f"Camera Error:\n{err_text[:100]}"))
 
     def _on_camera_started(self):
-        self.feed_status.config(text="● LIVE 1080p", fg=EMERALD)
+        self.feed_status.config(text="● LIVE 720p", fg=EMERALD)
         self._render_loop()
 
     def _load_yolo_model(self):
@@ -2167,7 +2203,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v2.0.0 (Full-Stack Web Command Center)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v2.0.1 (Single-Instance Camera Lock)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
