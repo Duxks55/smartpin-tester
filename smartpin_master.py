@@ -551,6 +551,10 @@ class MainDashboard(tk.Frame):
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
+    def on_show(self):
+        """Immediately cancels active timers and resets RGB status to idle Cyan upon return."""
+        self.controller.set_status_led("idle")
+
     def create_module_card(self, parent, title, desc, accent_color, badge_text, command, row, col):
         card = tk.Frame(parent, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
@@ -1133,7 +1137,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.4.1 (Common Anode RGB Fixed)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.4.2 (Instant Menu RGB Reset)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
