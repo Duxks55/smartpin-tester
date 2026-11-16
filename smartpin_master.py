@@ -1125,7 +1125,10 @@ class VisionAnalyzerView(tk.Frame):
                 ]
             }
 
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(api_version="v1beta")
+            )
             prompt = (
                 "Inspect this macro image of an electronic component. Decode any laser-etched markings, "
                 "SMD codes, or resistor color bands, and generate a structured datasheet profile including "
@@ -1360,7 +1363,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.7.0 (Wi-Fi Manager & Auto Key Loader)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.7.1 (v1beta Structured Vision Enabled)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
