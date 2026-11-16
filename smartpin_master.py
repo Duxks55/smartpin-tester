@@ -98,10 +98,6 @@ class SmartPinMasterApp(tk.Tk):
         self.show_frame("MainDashboard")
         self.start_iot_server()
 
-        # If hardware bus failed to load at startup, flag Red status immediately
-        if not HARDWARE_AVAILABLE:
-            self.set_status_led("error")
-
     def install_global_error_hooks(self):
         """Routes any unhandled UI or background exception to the Red error LED."""
         def tk_error_handler(exc, val, tb):
@@ -136,7 +132,7 @@ class SmartPinMasterApp(tk.Tk):
                 print(f"LED GPIO Setup Error: {e}")
 
     def setup_status_rgb(self):
-        """Initializes Common Cathode RGB status indicator (R=10, G=16, B=12)."""
+        """Initializes Common Anode RGB status indicator (R=10, G=16, B=12)."""
         self.rgb_pins = {"r": 10, "g": 16, "b": 12}
         self.rgb_anim_id = None
         if HARDWARE_AVAILABLE:
@@ -145,7 +141,7 @@ class SmartPinMasterApp(tk.Tk):
                 GPIO.setwarnings(False)
                 for pin in self.rgb_pins.values():
                     GPIO.setup(pin, GPIO.OUT)
-                    GPIO.output(pin, GPIO.LOW)
+                    GPIO.output(pin, GPIO.HIGH)  # HIGH = OFF for Common Anode
             except Exception as e:
                 print(f"RGB Setup Error: {e}")
         self.set_status_led("idle")
@@ -153,9 +149,10 @@ class SmartPinMasterApp(tk.Tk):
     def _write_rgb(self, r, g, b):
         if HARDWARE_AVAILABLE:
             try:
-                GPIO.output(self.rgb_pins["r"], GPIO.HIGH if r else GPIO.LOW)
-                GPIO.output(self.rgb_pins["g"], GPIO.HIGH if g else GPIO.LOW)
-                GPIO.output(self.rgb_pins["b"], GPIO.HIGH if b else GPIO.LOW)
+                # Common Anode RGB LED (Longest leg -> 3.3V): LOW = ON, HIGH = OFF
+                GPIO.output(self.rgb_pins["r"], GPIO.LOW if r else GPIO.HIGH)
+                GPIO.output(self.rgb_pins["g"], GPIO.LOW if g else GPIO.HIGH)
+                GPIO.output(self.rgb_pins["b"], GPIO.LOW if b else GPIO.HIGH)
             except Exception:
                 pass
 
@@ -900,7 +897,6 @@ class VisionAnalyzerView(tk.Frame):
                         package_detected = pkg.upper()
                         break
                 part_detected = "Identified"
-                # Flag as error if AI explicitly states it cannot identify or sees nothing
                 if "no electronic component" in lower or "cannot identify" in lower or "unable to identify" in lower:
                     scan_succeeded = False
                 else:
@@ -1137,7 +1133,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.4.0 (Extended RGB Diagnostics)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.4.1 (Common Anode RGB Fixed)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
