@@ -58,7 +58,6 @@ class BootSplashScreen(tk.Frame):
         
         tk.Label(center_box, text="Hardware Diagnostics & Optical Vision Suite", fg=TEXT_MUTED, bg=BG_DARK, font=("Helvetica", 10)).pack(pady=(0, 24))
         
-        # Custom sleek progress bar track
         self.bar_width = 420
         self.bar_height = 10
         self.progress_canvas = tk.Canvas(center_box, width=self.bar_width, height=self.bar_height, bg=SURFACE_ALT, highlightthickness=1, highlightbackground=SURFACE_BORDER)
@@ -93,15 +92,12 @@ class SmartPinMasterApp(tk.Tk):
         self.container.grid_rowconfigure(0, weight=1)
         self.container.grid_columnconfigure(0, weight=1)
         
-        # Render splash screen immediately before importing heavy libraries
         self.splash = BootSplashScreen(self.container)
         self.splash.grid(row=0, column=0, sticky="nsew")
         self.splash.tkraise()
         self.update_idletasks()
         
         self.install_global_error_hooks()
-        
-        # Load heavy libraries & build views in background so UI stays responsive
         threading.Thread(target=self._async_boot_sequence, daemon=True).start()
 
     def _update_splash(self, pct, msg):
@@ -353,7 +349,6 @@ class SmartPinMasterApp(tk.Tk):
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
 
-                # 1. Check NPN: Base -> Collector AND Base -> Emitter conduct; reverse directions do NOT
                 for base in [0, 1, 2]:
                     others = [p for p in [0, 1, 2] if p != base]
                     fwd_0 = readings.get((base, others[0]), 0)
@@ -369,7 +364,6 @@ class SmartPinMasterApp(tk.Tk):
                         found_type, match_pin_b, match_pin_c, match_pin_e = "NPN", base, collector, emitter
                         break
 
-                # 2. Check PNP: Collector -> Base AND Emitter -> Base conduct; reverse directions do NOT
                 if not found_type:
                     for base in [0, 1, 2]:
                         others = [p for p in [0, 1, 2] if p != base]
@@ -658,7 +652,7 @@ class MainDashboard(tk.Frame):
 
 
 # ==============================================================================
-# REFINED OPTICAL COMPONENT IDENTIFIER
+# CARD-BASED OPTICAL COMPONENT IDENTIFIER + EMBEDDED DATASHEET
 # ==============================================================================
 class VisionAnalyzerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -671,7 +665,9 @@ class VisionAnalyzerView(tk.Frame):
         self.camera_ready = False
         self.current_frame = None
         self.loop_id = None
+        self.last_structured_data = None
         
+        # Header
         header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -685,12 +681,14 @@ class VisionAnalyzerView(tk.Frame):
         tk.Label(title_box, text="OPTICAL IDENTIFIER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         tk.Label(title_box, text="IMX708 MACRO AI", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold")).pack(side="left", padx=(6, 0))
         
+        # 50/50 Workspace Grid
         content = tk.Frame(self, bg=BG_DARK, padx=8, pady=6)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
         content.grid_columnconfigure(1, weight=1, uniform="half")
         content.grid_rowconfigure(0, weight=1)
         
+        # Left Side: Camera Viewport Card
         cam_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         cam_card.grid(row=0, column=0, sticky="nsew", padx=4, pady=2)
         
@@ -703,14 +701,16 @@ class VisionAnalyzerView(tk.Frame):
         self.video_label = tk.Label(cam_card, text="Connecting Camera Module 3...", bg="#060911", fg=TEXT_MUTED, font=("Helvetica", 10))
         self.video_label.pack(fill="both", expand=True, padx=6, pady=(2, 6))
         
+        # Right Side: Structured Telemetry Cards + Embedded Datasheet
         panel_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         panel_card.grid(row=0, column=1, sticky="nsew", padx=4, pady=2)
         
+        # Bottom Action Controls
         btn_box = tk.Frame(panel_card, bg=SURFACE)
         btn_box.pack(side="bottom", fill="x", padx=10, pady=(4, 8))
         
         self.scan_btn = tk.Button(btn_box, text="✨ Execute AI Analysis", bg=CYAN_ACCENT, fg="#ffffff", activebackground="#0891b2",
-                                  activeforeground="#ffffff", font=("Helvetica", 10, "bold"), relief="flat", pady=8,
+                                  activeforeground="#ffffff", font=("Helvetica", 10, "bold"), relief="flat", pady=7,
                                   cursor="hand2", command=self.trigger_analysis)
         self.scan_btn.pack(fill="x", pady=(0, 4))
         
@@ -720,53 +720,186 @@ class VisionAnalyzerView(tk.Frame):
         focus_row.grid_columnconfigure(1, weight=1)
         
         self.macro_btn = tk.Button(focus_row, text="🔬 Lock Macro (7cm)", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
-                                   relief="flat", pady=5, cursor="hand2", command=self.set_macro_focus)
+                                   relief="flat", pady=4, cursor="hand2", command=self.set_macro_focus)
         self.macro_btn.grid(row=0, column=0, sticky="ew", padx=(0, 2))
         
         self.autofocus_btn = tk.Button(focus_row, text="🎯 Trigger AF Sweep", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
-                                       relief="flat", pady=5, cursor="hand2", command=self.trigger_autofocus)
+                                       relief="flat", pady=4, cursor="hand2", command=self.trigger_autofocus)
         self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
-        kpi_grid = tk.Frame(panel_card, bg=SURFACE)
-        kpi_grid.pack(side="top", fill="x", padx=10, pady=(6, 2))
-        kpi_grid.grid_columnconfigure(0, weight=1)
-        kpi_grid.grid_columnconfigure(1, weight=1)
+        # Scrollable Card Container
+        scroll_wrap = tk.Frame(panel_card, bg=SURFACE)
+        scroll_wrap.pack(side="top", fill="both", expand=True, padx=8, pady=(6, 2))
         
-        self.kpi_package = self.create_kpi_cell(kpi_grid, "PACKAGE", "Scanning...", CYAN_ACCENT, 0, 0)
-        self.kpi_part = self.create_kpi_cell(kpi_grid, "IDENTIFIED PART", "Standby", EMERALD, 0, 1)
+        self.cards_canvas = tk.Canvas(scroll_wrap, bg=SURFACE, highlightthickness=0, yscrollincrement=1)
+        self.cards_frame = tk.Frame(self.cards_canvas, bg=SURFACE)
+        self.cards_frame.bind("<Configure>", lambda e: self.cards_canvas.configure(scrollregion=self.cards_canvas.bbox("all")))
+        self.cards_win = self.cards_canvas.create_window((0, 0), window=self.cards_frame, anchor="nw")
+        self.cards_canvas.bind("<Configure>", lambda e: self.cards_canvas.itemconfig(self.cards_win, width=e.width))
+        self.cards_canvas.pack(side="left", fill="both", expand=True)
         
-        text_container = tk.Frame(panel_card, bg="#060911", highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        text_container.pack(side="top", fill="both", expand=True, padx=10, pady=4)
-        
-        scrollbar = tk.Scrollbar(text_container, orient="vertical", width=16)
-        scrollbar.pack(side="right", fill="y")
-        
-        self.results_box = tk.Text(text_container, bg="#060911", fg="#e2e8f0", font=("Consolas", 9), 
-                                   bd=0, relief="flat", wrap="word", height=7, yscrollcommand=scrollbar.set)
-        self.results_box.pack(side="left", fill="both", expand=True, padx=6, pady=6)
-        scrollbar.config(command=self.results_box.yview)
-        self._bind_touch_scroll(self.results_box)
-        
-        self.results_box.insert("1.0", "Position component under lens (5-10cm).\nContinuous macro focus active.\nTap 'Execute AI Analysis' below.\n")
+        self._bind_canvas_touch_scroll(self.cards_canvas, self.cards_frame)
+        self._render_placeholder_cards()
 
-    def create_kpi_cell(self, parent, label, default_value, color, r, c):
-        f = tk.Frame(parent, bg=SURFACE_ALT, padx=6, pady=4, highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        f.grid(row=r, column=c, padx=2, pady=2, sticky="nsew")
-        tk.Label(f, text=label, fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(anchor="w")
-        val = tk.Label(f, text=default_value, fg=color, bg=SURFACE_ALT, font=("Helvetica", 9, "bold"))
-        val.pack(anchor="w")
-        return val
+    def _bind_canvas_touch_scroll(self, canvas, frame):
+        state = {"last_y": 0}
+        def on_press(e): state["last_y"] = e.y_root
+        def on_drag(e):
+            dy = state["last_y"] - e.y_root
+            if abs(dy) > 2:
+                canvas.yview_scroll(int(dy), "units")
+                state["last_y"] = e.y_root
+        def bind_recursive(w):
+            if isinstance(w, tk.Button): return
+            w.bind("<ButtonPress-1>", on_press, add="+")
+            w.bind("<B1-Motion>", on_drag, add="+")
+            for c in w.winfo_children():
+                bind_recursive(c)
+        self._rebind_cards_scroll = lambda: bind_recursive(frame)
+        bind_recursive(canvas)
+        bind_recursive(frame)
 
-    def _bind_touch_scroll(self, widget):
-        touch_state = {"last_y": 0}
-        def on_press(e): touch_state["last_y"] = e.y
-        def on_motion(e):
-            dy = touch_state["last_y"] - e.y
-            if abs(dy) > 3:
-                widget.yview_scroll(int(dy / 4), "units")
-                touch_state["last_y"] = e.y
-        widget.bind("<ButtonPress-1>", on_press, add="+")
-        widget.bind("<B1-Motion>", on_motion, add="+")
+    def _clear_cards(self):
+        for w in self.cards_frame.winfo_children():
+            w.destroy()
+        self.cards_canvas.yview_moveto(0)
+
+    def _render_placeholder_cards(self):
+        self._clear_cards()
+        card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=10)
+        card.pack(fill="x", pady=4)
+        tk.Label(card, text="READY FOR OPTICAL SCAN", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Helvetica", 8, "bold")).pack(anchor="w")
+        tk.Label(card, text="Center component 5–10cm under lens and tap 'Execute AI Analysis' to populate Component, Pinout, and Datasheet cards.",
+                 fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=320, justify="left").pack(anchor="w", pady=(4, 0))
+        self._rebind_cards_scroll()
+
+    def _render_structured_cards(self, data):
+        self._clear_cards()
+        self.last_structured_data = data
+
+        # 1. COMPONENT IDENTITY CARD
+        id_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=CYAN_ACCENT, highlightthickness=1, padx=10, pady=8)
+        id_card.pack(fill="x", pady=(2, 5))
+        
+        top_r = tk.Frame(id_card, bg=SURFACE_ALT)
+        top_r.pack(fill="x")
+        tk.Label(top_r, text="COMPONENT IDENTITY", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(side="left")
+        pkg_badge = tk.Label(top_r, text=data.get("package_type", "UNKNOWN"), fg="#ffffff", bg=BLUE_ACCENT, font=("Helvetica", 7, "bold"), padx=6, pady=1)
+        pkg_badge.pack(side="right")
+
+        comp_title = f"{data.get('part_number', 'Unknown')} — {data.get('component_name', 'Component')}"
+        tk.Label(id_card, text=comp_title, fg=TEXT_MAIN, bg=SURFACE_ALT, font=("Helvetica", 10, "bold"), wraplength=325, justify="left").pack(anchor="w", pady=(3, 2))
+        tk.Label(id_card, text=data.get("function_summary", ""), fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=325, justify="left").pack(anchor="w")
+
+        # 2. PINOUT CONFIGURATION CARD
+        pinouts = data.get("pinouts", [])
+        if pinouts:
+            pin_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=8)
+            pin_card.pack(fill="x", pady=4)
+            tk.Label(pin_card, text="PINOUT CONFIGURATION", fg=EMERALD, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(anchor="w", pady=(0, 4))
+            
+            for p in pinouts:
+                row = tk.Frame(pin_card, bg="#0b1120", padx=6, pady=3)
+                row.pack(fill="x", pady=1)
+                tk.Label(row, text=f"PIN {p.get('pin', '?')}", fg=CYAN_ACCENT, bg="#0b1120", font=("Consolas", 8, "bold"), width=7, anchor="w").pack(side="left")
+                tk.Label(row, text=p.get("name", ""), fg=TEXT_MAIN, bg="#0b1120", font=("Helvetica", 8, "bold"), width=9, anchor="w").pack(side="left")
+                tk.Label(row, text=p.get("description", ""), fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 8), anchor="w").pack(side="left", fill="x", expand=True)
+
+        # 3. KEY ELECTRICAL RATINGS CARD
+        specs = data.get("electrical_specs", [])
+        if specs:
+            spec_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=8)
+            spec_card.pack(fill="x", pady=4)
+            tk.Label(spec_card, text="ELECTRICAL RATINGS", fg=AMBER, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(anchor="w", pady=(0, 4))
+            
+            grid_f = tk.Frame(spec_card, bg=SURFACE_ALT)
+            grid_f.pack(fill="x")
+            grid_f.grid_columnconfigure(0, weight=1)
+            grid_f.grid_columnconfigure(1, weight=1)
+            for idx, sp in enumerate(specs):
+                cell = tk.Frame(grid_f, bg="#0b1120", padx=6, pady=4)
+                cell.grid(row=idx // 2, column=idx % 2, padx=2, pady=2, sticky="nsew")
+                tk.Label(cell, text=sp.get("parameter", ""), fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 7)).pack(anchor="w")
+                tk.Label(cell, text=sp.get("value", ""), fg=TEXT_MAIN, bg="#0b1120", font=("Consolas", 8, "bold")).pack(anchor="w")
+
+        # 4. EMBEDDED TECHNICAL DATASHEET CARD
+        ds_card = tk.Frame(self.cards_frame, bg="#060911", highlightbackground=BLUE_ACCENT, highlightthickness=1, padx=10, pady=8)
+        ds_card.pack(fill="x", pady=4)
+        
+        ds_hdr = tk.Frame(ds_card, bg="#060911")
+        ds_hdr.pack(fill="x", pady=(0, 4))
+        tk.Label(ds_hdr, text="📄 EMBEDDED DATASHEET", fg=BLUE_ACCENT, bg="#060911", font=("Helvetica", 8, "bold")).pack(side="left")
+        tk.Button(ds_hdr, text="Expand Full Sheet ⤢", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 7, "bold"),
+                  relief="flat", padx=6, pady=2, cursor="hand2", command=self.open_full_datasheet_modal).pack(side="right")
+
+        for sec_title, sec_key in [
+            ("ABSOLUTE MAX RATINGS", "absolute_max_ratings"),
+            ("OPERATING CHARACTERISTICS", "operating_characteristics"),
+            ("TYPICAL APPLICATIONS", "typical_applications")
+        ]:
+            val = data.get(sec_key, "")
+            if val:
+                tk.Label(ds_card, text=sec_title, fg=TEXT_MUTED, bg="#060911", font=("Helvetica", 7, "bold")).pack(anchor="w", pady=(4, 1))
+                tk.Label(ds_card, text=val, fg="#e2e8f0", bg="#060911", font=("Consolas", 8), wraplength=320, justify="left").pack(anchor="w")
+
+        self._rebind_cards_scroll()
+
+    def open_full_datasheet_modal(self):
+        """Opens an embedded full-screen 800x480 Technical Datasheet sheet over the workspace."""
+        if not self.last_structured_data:
+            return
+        data = self.last_structured_data
+
+        modal = tk.Frame(self, bg=BG_DARK)
+        modal.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+
+        # Datasheet Top Bar
+        hdr = tk.Frame(modal, bg=SURFACE, height=46, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        hdr.pack(fill="x", side="top")
+        hdr.pack_propagate(False)
+
+        tk.Button(hdr, text="✕ Close Datasheet", bg=ROSE, fg="#ffffff", font=("Helvetica", 9, "bold"),
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=modal.destroy).pack(side="left", padx=12)
+        tk.Label(hdr, text=f"TECHNICAL DATASHEET  •  {data.get('part_number', 'COMPONENT').upper()}",
+                 fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left", padx=8)
+
+        # Scrollable Datasheet Body
+        body_wrap = tk.Frame(modal, bg=BG_DARK, padx=16, pady=10)
+        body_wrap.pack(fill="both", expand=True)
+
+        ds_text = tk.Text(body_wrap, bg="#060911", fg="#f1f5f9", font=("Consolas", 10),
+                          bd=0, relief="flat", wrap="word", padx=14, pady=12)
+        ds_text.pack(fill="both", expand=True)
+
+        # Touch scrolling for datasheet modal
+        t_state = {"y": 0}
+        ds_text.bind("<ButtonPress-1>", lambda e: t_state.update({"y": e.y}))
+        ds_text.bind("<B1-Motion>", lambda e: (ds_text.yview_scroll(int((t_state["y"] - e.y) / 4), "units"), t_state.update({"y": e.y})))
+
+        pin_lines = "\n".join([f"  • Pin {p.get('pin')}: {p.get('name')} — {p.get('description')}" for p in data.get("pinouts", [])])
+        spec_lines = "\n".join([f"  • {s.get('parameter')}: {s.get('value')}" for s in data.get("electrical_specs", [])])
+
+        sheet_content = (
+            f"======================================================================\n"
+            f"  PART NUMBER : {data.get('part_number', 'N/A')}\n"
+            f"  COMPONENT   : {data.get('component_name', 'N/A')}\n"
+            f"  PACKAGE     : {data.get('package_type', 'N/A')}   |   CATEGORY: {data.get('category', 'N/A')}\n"
+            f"======================================================================\n\n"
+            f"1. GENERAL DESCRIPTION\n"
+            f"   {data.get('function_summary', 'N/A')}\n\n"
+            f"2. PIN CONFIGURATION & FUNCTIONS\n"
+            f"{pin_lines or '  • Standard 2-terminal passive component'}\n\n"
+            f"3. ELECTRICAL CHARACTERISTICS\n"
+            f"{spec_lines or '  • N/A'}\n\n"
+            f"4. ABSOLUTE MAXIMUM RATINGS\n"
+            f"   {data.get('absolute_max_ratings', 'N/A')}\n\n"
+            f"5. OPERATING & THERMAL CHARACTERISTICS\n"
+            f"   {data.get('operating_characteristics', 'N/A')}\n\n"
+            f"6. TYPICAL CIRCUIT APPLICATIONS\n"
+            f"   {data.get('typical_applications', 'N/A')}\n"
+        )
+        ds_text.insert("1.0", sheet_content)
+        ds_text.config(state="disabled")
 
     def exit_to_menu(self):
         self.on_hide()
@@ -777,8 +910,7 @@ class VisionAnalyzerView(tk.Frame):
         self.camera_ready = False
         self.feed_status.config(text="● CONNECTING...", fg=AMBER)
         self.video_label.config(image="", text="Starting Camera Module 3...")
-        self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Sensor initializing...\nEngaging macro tracking...\n")
+        self._render_placeholder_cards()
         
         threading.Thread(target=self._start_camera_hardware, daemon=True).start()
         if self.model is None and CV_AVAILABLE:
@@ -821,7 +953,6 @@ class VisionAnalyzerView(tk.Frame):
 
     def _on_camera_started(self):
         self.feed_status.config(text="● LIVE 1080p", fg=EMERALD)
-        self.results_box.insert(tk.END, "Camera active. Ready for analysis.\n")
         self._render_loop()
 
     def _load_yolo_model(self):
@@ -854,11 +985,9 @@ class VisionAnalyzerView(tk.Frame):
         if self.picam2:
             try:
                 self.picam2.set_controls({"AfMode": 0, "LensPosition": 8.5})
-                self.results_box.insert(tk.END, "[Focus] Locked to Macro Close-Up (~7cm).\n")
-                self.results_box.see(tk.END)
-            except Exception as e:
+                self.feed_status.config(text="● MACRO LOCKED (7cm)", fg=CYAN_ACCENT)
+            except Exception:
                 self.controller.set_status_led("error")
-                self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
         else:
             self.controller.set_status_led("error")
 
@@ -866,11 +995,9 @@ class VisionAnalyzerView(tk.Frame):
         if self.picam2:
             try:
                 self.picam2.set_controls({"AfMode": 2, "AfRange": 2, "AfTrigger": 0})
-                self.results_box.insert(tk.END, "[Focus] Continuous Macro Sweep triggered.\n")
-                self.results_box.see(tk.END)
-            except Exception as e:
+                self.feed_status.config(text="● AF SWEEP ACTIVE", fg=EMERALD)
+            except Exception:
                 self.controller.set_status_led("error")
-                self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
         else:
             self.controller.set_status_led("error")
 
@@ -880,19 +1007,25 @@ class VisionAnalyzerView(tk.Frame):
             return
 
         self.controller.set_status_led("busy")
-        self.scan_btn.config(state="disabled", text="✨ Analyzing...")
-        self.results_box.delete("1.0", tk.END)
-        self.results_box.insert("1.0", "Querying AI Vision Pipeline...\n")
+        self.scan_btn.config(state="disabled", text="✨ Extracting Cards & Datasheet...")
+        
+        self._clear_cards()
+        loading_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, padx=10, pady=12)
+        loading_card.pack(fill="x", pady=6)
+        tk.Label(loading_card, text="ANALYZING COMPONENT & BUILDING DATASHEET...", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Helvetica", 8, "bold")).pack(anchor="w")
+        tk.Label(loading_card, text="Decoding markings, pinouts, and maximum ratings...", fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8)).pack(anchor="w", pady=(3, 0))
 
         full_frame = self.current_frame.copy()
         threading.Thread(target=self._run_inference_pipeline, args=(full_frame,), daemon=True).start()
 
-    def _query_ai_vision(self, frame_rgb):
+    def _query_ai_vision_structured(self, frame_rgb):
         api_key = os.environ.get("GEMINI_API_KEY")
-        if not api_key: return None
+        if not api_key:
+            return None
 
         try:
             from google import genai
+            from google.genai import types
             import io
             
             pil_img = Image.fromarray(frame_rgb)
@@ -901,76 +1034,110 @@ class VisionAnalyzerView(tk.Frame):
             pil_img.save(img_byte_arr, format='JPEG', quality=85)
             img_bytes = img_byte_arr.getvalue()
 
+            schema = {
+                "type": "OBJECT",
+                "properties": {
+                    "identified": {"type": "BOOLEAN"},
+                    "part_number": {"type": "STRING"},
+                    "component_name": {"type": "STRING"},
+                    "package_type": {"type": "STRING"},
+                    "category": {"type": "STRING"},
+                    "function_summary": {"type": "STRING"},
+                    "pinouts": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "pin": {"type": "STRING"},
+                                "name": {"type": "STRING"},
+                                "description": {"type": "STRING"}
+                            },
+                            "required": ["pin", "name", "description"]
+                        }
+                    },
+                    "electrical_specs": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "parameter": {"type": "STRING"},
+                                "value": {"type": "STRING"}
+                            },
+                            "required": ["parameter", "value"]
+                        }
+                    },
+                    "absolute_max_ratings": {"type": "STRING"},
+                    "operating_characteristics": {"type": "STRING"},
+                    "typical_applications": {"type": "STRING"}
+                },
+                "required": [
+                    "identified", "part_number", "component_name", "package_type",
+                    "category", "function_summary", "pinouts", "electrical_specs",
+                    "absolute_max_ratings", "operating_characteristics", "typical_applications"
+                ]
+            }
+
             client = genai.Client(api_key=api_key)
             prompt = (
-                "Identify this electronic component under macro inspection:\n"
-                "1. Package & Physical Type (e.g. TO-92, SOIC-8, DIP-14, SMD 0805)\n"
-                "2. Markings / Part No. (decode laser-etched text or SMD code)\n"
-                "3. Verified Part Name & Function\n"
-                "4. Standard Pinout / Polarity\n"
-                "Keep response under 80 words. Direct, structured, and technical."
+                "Inspect this macro image of an electronic component. Decode any laser-etched markings, "
+                "SMD codes, or resistor color bands, and generate a structured datasheet profile including "
+                "exact pinouts (left-to-right or standard pin numbering), key electrical ratings, "
+                "absolute maximum ratings, operating characteristics, and typical circuit uses. "
+                "If no component is visible, set identified=false."
             )
             response = client.models.generate_content(
                 model="gemini-2.5-flash",
-                contents=[genai.types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"), prompt]
+                contents=[types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"), prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=schema
+                )
             )
-            return response.text
+            return json.loads(response.text)
         except Exception as e:
-            print(f"Gemini Vision API error: {e}")
+            print(f"Gemini Structured Vision error: {e}")
             return None
 
     def _run_inference_pipeline(self, frame_rgb):
-        output_logs = []
-        package_detected = "Unknown"
-        part_detected = "Undetermined"
+        structured_data = self._query_ai_vision_structured(frame_rgb)
         scan_succeeded = False
-        
-        try:
-            ai_result = self._query_ai_vision(frame_rgb)
-            if ai_result:
-                output_logs.append("=== AI COMPONENT IDENTIFICATION ===")
-                output_logs.append(ai_result.strip())
-                
-                lower = ai_result.lower()
-                for pkg in ["to-92", "to-220", "soic-8", "dip-8", "dip-14", "sot-23", "resistor", "capacitor"]:
-                    if pkg in lower:
-                        package_detected = pkg.upper()
-                        break
-                part_detected = "Identified"
-                if "no electronic component" in lower or "cannot identify" in lower or "unable to identify" in lower:
-                    scan_succeeded = False
-                else:
-                    scan_succeeded = True
-            else:
-                import pytesseract
-                gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
-                _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-                ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
-                text = pytesseract.image_to_string(thresh, config=ocr_config).strip()
-                lines = [l.strip() for l in text.split("\n") if len(l.strip()) >= 3]
 
-                output_logs.append("=== LOCAL VISION REPORT ===")
-                if lines:
-                    part_detected = lines[0]
-                    scan_succeeded = True
-                    output_logs.append("\n=== OCR TEXT / PART NO. ===")
-                    for line in lines:
-                        output_logs.append(f"• {line}")
-                else:
-                    scan_succeeded = False
-                    output_logs.append("ERROR: Cloud AI unreachable & no local OCR markings found.\nCheck Wi-Fi, API key, or lighting angle.")
+        if structured_data and structured_data.get("identified"):
+            scan_succeeded = True
+            self.controller.log_test_result("Optical Identifier", f"Identified {structured_data.get('part_number', 'Component')}")
+        else:
+            # Offline OCR fallback formatted into the same card structure
+            ocr_part = "Unidentified"
+            if CV_AVAILABLE and pytesseract and cv2:
+                try:
+                    gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
+                    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                    ocr_config = "--psm 6 -c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-./"
+                    text = pytesseract.image_to_string(thresh, config=ocr_config).strip()
+                    lines = [l.strip() for l in text.split("\n") if len(l.strip()) >= 3]
+                    if lines:
+                        ocr_part = lines[0]
+                        scan_succeeded = True
+                except Exception:
+                    pass
 
-            report_text = "\n".join(output_logs)
-            self.controller.log_test_result("Optical Identifier", "Scan completed" if scan_succeeded else "Scan failed")
-        except Exception as e:
-            report_text = f"Inference Error: {e}"
-            scan_succeeded = False
+            structured_data = {
+                "identified": scan_succeeded,
+                "part_number": ocr_part if scan_succeeded else "NO COMPONENT",
+                "component_name": "Offline OCR Match" if scan_succeeded else "Scan Failed / Unrecognized",
+                "package_type": "N/A",
+                "category": "Local Fallback",
+                "function_summary": "Cloud AI unreachable or no electronic component detected in frame. Check Wi-Fi, GEMINI_API_KEY, or lighting angle.",
+                "pinouts": [],
+                "electrical_specs": [],
+                "absolute_max_ratings": "Connect to Wi-Fi with valid GEMINI_API_KEY for full datasheet specs.",
+                "operating_characteristics": "N/A",
+                "typical_applications": "N/A"
+            }
+            self.controller.log_test_result("Optical Identifier", "Scan completed (Local)" if scan_succeeded else "Scan failed")
 
         def update_gui():
-            self.kpi_package.config(text=package_detected)
-            self.kpi_part.config(text=part_detected)
-            self.results_box.delete("1.0", tk.END)
-            self.results_box.insert("1.0", report_text)
+            self._render_structured_cards(structured_data)
             self.scan_btn.config(state="normal", text="✨ Execute AI Analysis")
             self.controller.set_status_led("success" if scan_succeeded else "error")
 
@@ -1123,7 +1290,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.5.4 (Calibrated BJT Thresholds)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.6.0 (Structured Vision Cards & Datasheet)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
