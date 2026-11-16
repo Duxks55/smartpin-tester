@@ -155,7 +155,7 @@ class SmartPinMasterApp(tk.Tk):
         self.after(0, self._finalize_gui_startup)
 
     def _finalize_gui_startup(self):
-        for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, 
+        for F in (MainDashboard, TransistorCheckerView, 
                   LedBlinkerManagerView, VisionAnalyzerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
             frame = F(parent=self.container, controller=self)
@@ -455,7 +455,6 @@ class SmartPinMasterApp(tk.Tk):
                                 <h1>SmartPin Telemetry Bridge</h1>
                                 <div class="card">
                                     <button onclick="triggerTest('transistor')">Transistor Scan</button>
-                                    <button onclick="triggerTest('capacitor')">Capacitor Pulse</button>
                                     <button onclick="triggerTest('i2c')">Scan I2C</button>
                                     <pre id="output">System operational. Awaiting remote triggers...</pre>
                                 </div>
@@ -495,10 +494,6 @@ class SmartPinMasterApp(tk.Tk):
                             app_instance.log_test_result("Transistor Module", f"Remote: {res}")
                             status = "success" if "PASSED" in res else "error"
                             app_instance.after(0, lambda s=status: app_instance.set_status_led(s))
-                        elif test_type == 'capacitor':
-                            res = "Capacitance Test Completed. Nominal ESR measured."
-                            app_instance.log_test_result("Capacitor Module", "Remote measurement executed")
-                            app_instance.after(0, lambda: app_instance.set_status_led("success"))
                         elif test_type == 'i2c':
                             try:
                                 res = subprocess.check_output(["i2cdetect", "-y", "1"]).decode()
@@ -594,7 +589,6 @@ class MainDashboard(tk.Frame):
         modules = [
             ("Optical Vision AI", "IMX708 Macro 1080p deep inspection", CYAN_ACCENT, "AI VISION", lambda: controller.show_frame("VisionAnalyzerView")),
             ("Transistor Checker", "Tri-channel BJT & MOSFET analysis", BLUE_ACCENT, "ANALOG", lambda: controller.show_frame("TransistorCheckerView")),
-            ("Capacitor Analyzer", "Capacitance & ESR time-constant sweep", EMERALD, "PASSIVE", lambda: controller.show_frame("CapacitorAnalyzerView")),
             ("GPIO Signal Hub", "Dual-line LED test (Pins 21 & 25)", ROSE, "DIGITAL", lambda: controller.show_frame("LedBlinkerManagerView")),
             ("Telemetry Portal", "Local browser web server interface", AMBER, "HTTP 5000", lambda: self.open_link("http://localhost:5000")),
             ("Bus Diagnostics", "I2C probe scan & ADS1115 check", "#a855f7", "SYSTEM", self.run_i2c_check),
@@ -1039,56 +1033,6 @@ class TransistorCheckerView(tk.Frame):
         threading.Thread(target=run_thread, daemon=True).start()
 
 
-class CapacitorAnalyzerView(tk.Frame):
-    def __init__(self, parent, controller):
-        super().__init__(parent, bg=BG_DARK)
-        self.controller = controller
-        
-        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
-        header.pack(fill="x", side="top")
-        header.pack_propagate(False)
-        
-        tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=12)
-        tk.Label(header, text="CAPACITOR ANALYZER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
-        
-        body = tk.Frame(self, bg=BG_DARK)
-        body.pack(fill="both", expand=True, padx=20, pady=16)
-        
-        card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=16)
-        card.pack(fill="both", expand=True)
-        
-        self.result_box = tk.Text(card, bg="#060911", fg=EMERALD, font=("Consolas", 10), height=8, bd=0, relief="flat")
-        self.result_box.pack(fill="both", expand=True, pady=(0, 14))
-        self.result_box.insert("1.0", "Seat capacitor in test channels.\nTap 'Pulse Charge & Measure' below.\n")
-        
-        test_btn = tk.Button(card, text="⚡ Pulse Charge & Measure", bg=EMERALD, fg="#ffffff", font=("Helvetica", 10, "bold"),
-                             relief="flat", padx=16, pady=8, cursor="hand2", command=self.execute_capacitor_test)
-        test_btn.pack(anchor="w")
-
-    def execute_capacitor_test(self):
-        self.controller.set_status_led("busy")
-        self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "Charging RC timing network...\n")
-        def run_thread():
-            try:
-                if not HARDWARE_AVAILABLE:
-                    raise RuntimeError("Hardware bus unavailable for capacitor measurement.")
-                time.sleep(0.8)
-                res = "\nMEASUREMENT COMPLETE\nCapacitance: 470.2 µF\nNominal ESR: 0.12 Ω\n"
-                self.controller.log_test_result("Capacitor", "Measured 470.2uF")
-                def finish():
-                    self.result_box.insert(tk.END, res)
-                    self.controller.set_status_led("success")
-                self.after(0, finish)
-            except Exception as e:
-                def fail():
-                    self.result_box.insert(tk.END, f"\nERROR: {e}\n")
-                    self.controller.set_status_led("error")
-                self.after(0, fail)
-        threading.Thread(target=run_thread, daemon=True).start()
-
-
 class LedBlinkerManagerView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG_DARK)
@@ -1190,7 +1134,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.5.0 (Fast Splash & Lazy Boot)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.5.1 (Streamlined Studio)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
