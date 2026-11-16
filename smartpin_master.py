@@ -43,6 +43,46 @@ np = None
 Picamera2 = None
 
 
+def load_gemini_api_key():
+    """Loads GEMINI_API_KEY from environment or common key files on the Pi."""
+    env_key = os.environ.get("GEMINI_API_KEY", "").strip()
+    if env_key:
+        return env_key
+
+    base_dir = os.path.dirname(os.path.abspath(__file__))
+    home_dir = os.path.expanduser("~")
+    candidate_files = [
+        os.path.join(base_dir, ".env"),
+        os.path.join(base_dir, "gemini_key.txt"),
+        os.path.join(base_dir, "api_key.txt"),
+        os.path.join(base_dir, "key.txt"),
+        os.path.join(home_dir, ".env"),
+        os.path.join(home_dir, ".gemini_key"),
+        os.path.join(home_dir, "gemini_key.txt"),
+        os.path.join(home_dir, ".bashrc"),
+    ]
+
+    for filepath in candidate_files:
+        if os.path.isfile(filepath):
+            try:
+                with open(filepath, "r", encoding="utf-8", errors="ignore") as f:
+                    for raw_line in f:
+                        line = raw_line.strip()
+                        if not line or line.startswith("#"):
+                            continue
+                        if "GEMINI_API_KEY" in line and "=" in line:
+                            val = line.split("=", 1)[1].strip().strip('"').strip("'")
+                            if val:
+                                os.environ["GEMINI_API_KEY"] = val
+                                return val
+                        elif line.startswith("AIza") and len(line) >= 30:
+                            os.environ["GEMINI_API_KEY"] = line
+                            return line
+            except Exception:
+                pass
+    return ""
+
+
 class BootSplashScreen(tk.Frame):
     """Instant lightweight splash screen rendered <200ms after Python starts."""
     def __init__(self, parent):
@@ -83,6 +123,9 @@ class SmartPinMasterApp(tk.Tk):
         
         self.test_logs = []
         self.frames = {}
+        
+        # Pre-load Gemini API key from disk files if not in environment
+        load_gemini_api_key()
         
         self.style = ttk.Style()
         self.style.theme_use("clam")
@@ -281,7 +324,8 @@ class SmartPinMasterApp(tk.Tk):
 
     def get_system_network_info(self):
         hostname = socket.gethostname()
-        ip_address = "127.0.0.1"
+        ip_address = "Offline"
+        ssid = "Disconnected"
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))
@@ -289,10 +333,19 @@ class SmartPinMasterApp(tk.Tk):
             s.close()
         except Exception:
             try:
-                ip_address = socket.gethostbyname(hostname)
+                res = subprocess.check_output(["hostname", "-I"]).decode().strip()
+                if res:
+                    ip_address = res.split()[0]
             except Exception:
                 ip_address = "Offline"
-        return hostname, ip_address
+
+        try:
+            out = subprocess.check_output(["iwgetid", "-r"], stderr=subprocess.DEVNULL).decode().strip()
+            if out:
+                ssid = out
+        except Exception:
+            pass
+        return hostname, ip_address, ssid
 
     def run_hardware_transistor_test(self):
         mux1_pins = [4, 5, 6]  # Low-side GND Cathode sink
@@ -667,7 +720,6 @@ class VisionAnalyzerView(tk.Frame):
         self.loop_id = None
         self.last_structured_data = None
         
-        # Header
         header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -681,14 +733,12 @@ class VisionAnalyzerView(tk.Frame):
         tk.Label(title_box, text="OPTICAL IDENTIFIER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         tk.Label(title_box, text="IMX708 MACRO AI", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold")).pack(side="left", padx=(6, 0))
         
-        # 50/50 Workspace Grid
         content = tk.Frame(self, bg=BG_DARK, padx=8, pady=6)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
         content.grid_columnconfigure(1, weight=1, uniform="half")
         content.grid_rowconfigure(0, weight=1)
         
-        # Left Side: Camera Viewport Card
         cam_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         cam_card.grid(row=0, column=0, sticky="nsew", padx=4, pady=2)
         
@@ -701,11 +751,9 @@ class VisionAnalyzerView(tk.Frame):
         self.video_label = tk.Label(cam_card, text="Connecting Camera Module 3...", bg="#060911", fg=TEXT_MUTED, font=("Helvetica", 10))
         self.video_label.pack(fill="both", expand=True, padx=6, pady=(2, 6))
         
-        # Right Side: Structured Telemetry Cards + Embedded Datasheet
         panel_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         panel_card.grid(row=0, column=1, sticky="nsew", padx=4, pady=2)
         
-        # Bottom Action Controls
         btn_box = tk.Frame(panel_card, bg=SURFACE)
         btn_box.pack(side="bottom", fill="x", padx=10, pady=(4, 8))
         
@@ -727,7 +775,6 @@ class VisionAnalyzerView(tk.Frame):
                                        relief="flat", pady=4, cursor="hand2", command=self.trigger_autofocus)
         self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
-        # Scrollable Card Container
         scroll_wrap = tk.Frame(panel_card, bg=SURFACE)
         scroll_wrap.pack(side="top", fill="both", expand=True, padx=8, pady=(6, 2))
         
@@ -766,11 +813,16 @@ class VisionAnalyzerView(tk.Frame):
 
     def _render_placeholder_cards(self):
         self._clear_cards()
+        key_loaded = bool(load_gemini_api_key())
         card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=10)
         card.pack(fill="x", pady=4)
         tk.Label(card, text="READY FOR OPTICAL SCAN", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Helvetica", 8, "bold")).pack(anchor="w")
         tk.Label(card, text="Center component 5–10cm under lens and tap 'Execute AI Analysis' to populate Component, Pinout, and Datasheet cards.",
-                 fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=320, justify="left").pack(anchor="w", pady=(4, 0))
+                 fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=320, justify="left").pack(anchor="w", pady=(4, 6))
+        
+        key_lbl_txt = "● Gemini API Key: Loaded from Pi" if key_loaded else "● Gemini API Key: Missing (Set in Preferences)"
+        key_lbl_col = EMERALD if key_loaded else ROSE
+        tk.Label(card, text=key_lbl_txt, fg=key_lbl_col, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(anchor="w")
         self._rebind_cards_scroll()
 
     def _render_structured_cards(self, data):
@@ -845,7 +897,6 @@ class VisionAnalyzerView(tk.Frame):
         self._rebind_cards_scroll()
 
     def open_full_datasheet_modal(self):
-        """Opens an embedded full-screen 800x480 Technical Datasheet sheet over the workspace."""
         if not self.last_structured_data:
             return
         data = self.last_structured_data
@@ -853,7 +904,6 @@ class VisionAnalyzerView(tk.Frame):
         modal = tk.Frame(self, bg=BG_DARK)
         modal.place(x=0, y=0, relwidth=1.0, relheight=1.0)
 
-        # Datasheet Top Bar
         hdr = tk.Frame(modal, bg=SURFACE, height=46, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         hdr.pack(fill="x", side="top")
         hdr.pack_propagate(False)
@@ -863,7 +913,6 @@ class VisionAnalyzerView(tk.Frame):
         tk.Label(hdr, text=f"TECHNICAL DATASHEET  •  {data.get('part_number', 'COMPONENT').upper()}",
                  fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left", padx=8)
 
-        # Scrollable Datasheet Body
         body_wrap = tk.Frame(modal, bg=BG_DARK, padx=16, pady=10)
         body_wrap.pack(fill="both", expand=True)
 
@@ -871,7 +920,6 @@ class VisionAnalyzerView(tk.Frame):
                           bd=0, relief="flat", wrap="word", padx=14, pady=12)
         ds_text.pack(fill="both", expand=True)
 
-        # Touch scrolling for datasheet modal
         t_state = {"y": 0}
         ds_text.bind("<ButtonPress-1>", lambda e: t_state.update({"y": e.y}))
         ds_text.bind("<B1-Motion>", lambda e: (ds_text.yview_scroll(int((t_state["y"] - e.y) / 4), "units"), t_state.update({"y": e.y})))
@@ -1019,9 +1067,9 @@ class VisionAnalyzerView(tk.Frame):
         threading.Thread(target=self._run_inference_pipeline, args=(full_frame,), daemon=True).start()
 
     def _query_ai_vision_structured(self, frame_rgb):
-        api_key = os.environ.get("GEMINI_API_KEY")
+        api_key = load_gemini_api_key()
         if not api_key:
-            return None
+            return None, "Missing GEMINI_API_KEY file on Raspberry Pi."
 
         try:
             from google import genai
@@ -1093,20 +1141,18 @@ class VisionAnalyzerView(tk.Frame):
                     response_schema=schema
                 )
             )
-            return json.loads(response.text)
+            return json.loads(response.text), None
         except Exception as e:
-            print(f"Gemini Structured Vision error: {e}")
-            return None
+            return None, str(e)
 
     def _run_inference_pipeline(self, frame_rgb):
-        structured_data = self._query_ai_vision_structured(frame_rgb)
+        structured_data, err_msg = self._query_ai_vision_structured(frame_rgb)
         scan_succeeded = False
 
         if structured_data and structured_data.get("identified"):
             scan_succeeded = True
             self.controller.log_test_result("Optical Identifier", f"Identified {structured_data.get('part_number', 'Component')}")
         else:
-            # Offline OCR fallback formatted into the same card structure
             ocr_part = "Unidentified"
             if CV_AVAILABLE and pytesseract and cv2:
                 try:
@@ -1121,16 +1167,17 @@ class VisionAnalyzerView(tk.Frame):
                 except Exception:
                     pass
 
+            reason = err_msg if err_msg else "No electronic component detected in frame."
             structured_data = {
                 "identified": scan_succeeded,
                 "part_number": ocr_part if scan_succeeded else "NO COMPONENT",
                 "component_name": "Offline OCR Match" if scan_succeeded else "Scan Failed / Unrecognized",
                 "package_type": "N/A",
                 "category": "Local Fallback",
-                "function_summary": "Cloud AI unreachable or no electronic component detected in frame. Check Wi-Fi, GEMINI_API_KEY, or lighting angle.",
+                "function_summary": f"Cloud AI status: {reason}",
                 "pinouts": [],
                 "electrical_specs": [],
-                "absolute_max_ratings": "Connect to Wi-Fi with valid GEMINI_API_KEY for full datasheet specs.",
+                "absolute_max_ratings": "Check Wi-Fi connection in Preferences -> Wi-Fi Manager.",
                 "operating_characteristics": "N/A",
                 "typical_applications": "N/A"
             }
@@ -1263,6 +1310,9 @@ class LedBlinkerManagerView(tk.Frame):
         threading.Thread(target=blink_loop, daemon=True).start()
 
 
+# ==============================================================================
+# SETTINGS & MODERN WI-FI MANAGER VIEWS
+# ==============================================================================
 class SettingsView(tk.Frame):
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG_DARK)
@@ -1279,24 +1329,57 @@ class SettingsView(tk.Frame):
         body = tk.Frame(self, bg=BG_DARK)
         body.pack(fill="both", expand=True, padx=20, pady=12)
         
+        # Network & Wi-Fi Card
         net_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
         net_card.pack(fill="x", pady=4)
         
-        tk.Label(net_card, text="NETWORK ADAPTER STATUS", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        host, ip = self.controller.get_system_network_info()
-        tk.Label(net_card, text=f"Node: {host}  •  IP: {ip}", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 0))
+        net_top = tk.Frame(net_card, bg=SURFACE)
+        net_top.pack(fill="x")
+        tk.Label(net_top, text="WI-FI & NETWORK ADAPTER", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(side="left")
+        tk.Button(net_top, text="📶 Configure Wi-Fi →", bg=CYAN_ACCENT, fg="#ffffff", font=("Helvetica", 8, "bold"),
+                  relief="flat", padx=10, pady=3, cursor="hand2", command=lambda: controller.show_frame("WifiManagerView")).pack(side="right")
 
+        self.net_info_lbl = tk.Label(net_card, text="Checking interface...", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 10, "bold"))
+        self.net_info_lbl.pack(anchor="w", pady=(4, 0))
+
+        # Gemini API Key Status Card
+        api_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
+        api_card.pack(fill="x", pady=4)
+        
+        api_top = tk.Frame(api_card, bg=SURFACE)
+        api_top.pack(fill="x")
+        tk.Label(api_top, text="GEMINI CLOUD VISION KEY", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(side="left")
+        tk.Button(api_top, text="↻ Reload Key File", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
+                  relief="flat", padx=8, pady=2, cursor="hand2", command=self.refresh_api_key_status).pack(side="right")
+
+        self.api_status_lbl = tk.Label(api_card, text="Checking key...", fg=EMERALD, bg=SURFACE, font=("Helvetica", 9, "bold"))
+        self.api_status_lbl.pack(anchor="w", pady=(4, 0))
+
+        # OTA Software Update Card
         update_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.6.0 (Structured Vision Cards & Datasheet)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.7.0 (Wi-Fi Manager & Auto Key Loader)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
         
         tk.Button(update_card, text="Check GitHub Releases", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
                   relief="flat", padx=10, pady=4, cursor="hand2", command=self.trigger_software_update).pack(anchor="w")
+
+    def on_show(self):
+        host, ip, ssid = self.controller.get_system_network_info()
+        self.net_info_lbl.config(text=f"SSID: {ssid}  •  IP: {ip}  •  Host: {host}")
+        self.refresh_api_key_status()
+
+    def refresh_api_key_status(self):
+        key = load_gemini_api_key()
+        if key:
+            masked = f"{key[:6]}...{key[-4:]}" if len(key) > 10 else "Configured"
+            self.api_status_lbl.config(text=f"● Active Key Loaded ({masked})", fg=EMERALD)
+        else:
+            self.api_status_lbl.config(text="● Key Not Found (Place GEMINI_API_KEY in ~/smartpin-tester/.env)", fg=ROSE)
 
     def trigger_software_update(self):
         self.controller.set_status_led("busy")
@@ -1323,10 +1406,230 @@ class SettingsView(tk.Frame):
 
 
 class WifiManagerView(tk.Frame):
+    """Modern touch-scrollable Wi-Fi Scanner & Connector with On-Screen Keyboard."""
     def __init__(self, parent, controller):
         super().__init__(parent, bg=BG_DARK)
-        tk.Button(self, text="← Return", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
-                  relief="flat", command=lambda: controller.show_frame("SettingsView")).pack(anchor="nw", padx=14, pady=14)
+        self.controller = controller
+        
+        header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        header.pack(fill="x", side="top")
+        header.pack_propagate(False)
+        
+        tk.Button(header, text="← Settings", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
+                  relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("SettingsView")).pack(side="left", padx=12)
+        tk.Label(header, text="WI-FI MANAGER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left", padx=6)
+        
+        self.scan_btn = tk.Button(header, text="↻ Scan Networks", bg=CYAN_ACCENT, fg="#ffffff", font=("Helvetica", 9, "bold"),
+                                  relief="flat", padx=10, pady=4, cursor="hand2", command=self.scan_networks)
+        self.scan_btn.pack(side="right", padx=12)
+
+        # Active Connection Banner
+        banner = tk.Frame(self, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=8)
+        banner.pack(fill="x", padx=12, pady=(8, 4))
+        
+        self.conn_status_lbl = tk.Label(banner, text="Checking wlan0 status...", fg=EMERALD, bg=SURFACE, font=("Helvetica", 9, "bold"))
+        self.conn_status_lbl.pack(side="left")
+        
+        self.ip_badge = tk.Label(banner, text="IP: --", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Consolas", 8, "bold"), padx=8, pady=2)
+        self.ip_badge.pack(side="right")
+
+        # Scrollable Network List
+        list_wrap = tk.Frame(self, bg=BG_DARK)
+        list_wrap.pack(fill="both", expand=True, padx=12, pady=4)
+        
+        self.net_canvas = tk.Canvas(list_wrap, bg=BG_DARK, highlightthickness=0, yscrollincrement=1)
+        self.net_list_frame = tk.Frame(self.net_canvas, bg=BG_DARK)
+        self.net_list_frame.bind("<Configure>", lambda e: self.net_canvas.configure(scrollregion=self.net_canvas.bbox("all")))
+        self.net_win = self.net_canvas.create_window((0, 0), window=self.net_list_frame, anchor="nw")
+        self.net_canvas.bind("<Configure>", lambda e: self.net_canvas.itemconfig(self.net_win, width=e.width))
+        self.net_canvas.pack(side="left", fill="both", expand=True)
+
+        self._bind_scroll()
+
+    def _bind_scroll(self):
+        st = {"y": 0}
+        def press(e): st["y"] = e.y_root
+        def drag(e):
+            dy = st["y"] - e.y_root
+            if abs(dy) > 2:
+                self.net_canvas.yview_scroll(int(dy), "units")
+                st["y"] = e.y_root
+        def bind_all(w):
+            if isinstance(w, tk.Button): return
+            w.bind("<ButtonPress-1>", press, add="+")
+            w.bind("<B1-Motion>", drag, add="+")
+            for c in w.winfo_children():
+                bind_all(c)
+        self._rebind_list = lambda: bind_all(self.net_list_frame)
+        bind_all(self.net_canvas)
+
+    def on_show(self):
+        self.refresh_connection_banner()
+        self.scan_networks()
+
+    def refresh_connection_banner(self):
+        _, ip, ssid = self.controller.get_system_network_info()
+        if ssid != "Disconnected" and ip != "Offline":
+            self.conn_status_lbl.config(text=f"● Connected: {ssid}", fg=EMERALD)
+        else:
+            self.conn_status_lbl.config(text="● Not Connected to Wi-Fi", fg=AMBER)
+        self.ip_badge.config(text=f"IP: {ip}")
+
+    def scan_networks(self):
+        self.scan_btn.config(state="disabled", text="Scanning...")
+        for w in self.net_list_frame.winfo_children():
+            w.destroy()
+        tk.Label(self.net_list_frame, text="Scanning 2.4GHz / 5GHz bands via NetworkManager...", fg=TEXT_MUTED, bg=BG_DARK, font=("Helvetica", 9)).pack(pady=16)
+
+        def worker():
+            networks = []
+            try:
+                subprocess.run(["sudo", "nmcli", "dev", "wifi", "rescan"], capture_output=True, timeout=5)
+                raw = subprocess.check_output(["nmcli", "-t", "-f", "IN-USE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list"], timeout=6).decode()
+                seen = set()
+                for line in raw.strip().split("\n"):
+                    parts = line.split(":")
+                    if len(parts) >= 4:
+                        in_use = (parts[0].strip() == "*")
+                        ssid = parts[1].strip()
+                        signal = parts[2].strip()
+                        sec = parts[3].strip() or "OPEN"
+                        if ssid and ssid not in seen:
+                            seen.add(ssid)
+                            networks.append((in_use, ssid, signal, sec))
+            except Exception as e:
+                print(f"Wi-Fi scan error: {e}")
+            self.after(0, lambda: self._populate_network_cards(networks))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _populate_network_cards(self, networks):
+        self.scan_btn.config(state="normal", text="↻ Scan Networks")
+        for w in self.net_list_frame.winfo_children():
+            w.destroy()
+
+        if not networks:
+            tk.Label(self.net_list_frame, text="No Wi-Fi networks detected. Tap 'Scan Networks' to retry.", fg=ROSE, bg=BG_DARK, font=("Helvetica", 9)).pack(pady=16)
+            return
+
+        for in_use, ssid, signal, sec in networks:
+            border_col = EMERALD if in_use else SURFACE_BORDER
+            card = tk.Frame(self.net_list_frame, bg=SURFACE, highlightbackground=border_col, highlightthickness=1, padx=12, pady=8)
+            card.pack(fill="x", pady=4)
+
+            left = tk.Frame(card, bg=SURFACE)
+            left.pack(side="left", fill="x", expand=True)
+            
+            title_txt = f"{ssid}  (Connected)" if in_use else ssid
+            tk.Label(left, text=title_txt, fg=EMERALD if in_use else TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w")
+            tk.Label(left, text=f"Signal: {signal}%  •  Security: {sec}", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8)).pack(anchor="w")
+
+            btn_txt = "Reconnect" if in_use else "Connect →"
+            btn_bg = SURFACE_ALT if in_use else BLUE_ACCENT
+            tk.Button(card, text=btn_txt, bg=btn_bg, fg="#ffffff", font=("Helvetica", 8, "bold"),
+                      relief="flat", padx=12, pady=5, cursor="hand2",
+                      command=lambda s=ssid, sc=sec: self.open_password_modal(s, sc)).pack(side="right")
+
+        self._rebind_list()
+
+    def open_password_modal(self, ssid, security):
+        """Touch-friendly Wi-Fi password modal with integrated on-screen keyboard."""
+        if security == "OPEN":
+            self._connect_to_wifi(ssid, "")
+            return
+
+        modal = tk.Frame(self, bg=BG_DARK)
+        modal.place(x=0, y=0, relwidth=1.0, relheight=1.0)
+
+        top = tk.Frame(modal, bg=SURFACE, height=44, highlightbackground=SURFACE_BORDER, highlightthickness=1)
+        top.pack(fill="x")
+        top.pack_propagate(False)
+        tk.Button(top, text="✕ Cancel", bg=ROSE, fg="#ffffff", font=("Helvetica", 8, "bold"),
+                  relief="flat", padx=10, pady=3, command=modal.destroy).pack(side="left", padx=10)
+        tk.Label(top, text=f"Connect to: {ssid}", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(side="left", padx=8)
+
+        entry_box = tk.Frame(modal, bg=BG_DARK, padx=16, pady=8)
+        entry_box.pack(fill="x")
+        
+        pw_var = tk.StringVar()
+        pw_entry = tk.Entry(entry_box, textvariable=pw_var, bg=SURFACE_ALT, fg=TEXT_MAIN, insertbackground=CYAN_ACCENT,
+                            font=("Consolas", 12), relief="flat", bd=6)
+        pw_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        pw_entry.focus_set()
+
+        def submit():
+            pw = pw_var.get()
+            modal.destroy()
+            self._connect_to_wifi(ssid, pw)
+
+        tk.Button(entry_box, text="Connect ✓", bg=EMERALD, fg="#ffffff", font=("Helvetica", 10, "bold"),
+                  relief="flat", padx=14, pady=6, command=submit).pack(side="right")
+
+        # Touch On-Screen Keyboard
+        kb_frame = tk.Frame(modal, bg=SURFACE, padx=6, pady=6)
+        kb_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
+
+        shift_state = {"upper": False}
+        rows = [
+            list("1234567890-="),
+            list("qwertyuiop[]"),
+            list("asdfghjkl;'"),
+            list("zxcvbnm,./")
+        ]
+        key_buttons = []
+
+        def press_char(ch):
+            c = ch.upper() if shift_state["upper"] and ch.isalpha() else ch
+            pw_var.set(pw_var.get() + c)
+
+        def toggle_shift():
+            shift_state["upper"] = not shift_state["upper"]
+            for btn, base_ch in key_buttons:
+                if base_ch.isalpha():
+                    btn.config(text=base_ch.upper() if shift_state["upper"] else base_ch.lower())
+
+        for r_idx, row_chars in enumerate(rows):
+            r_frame = tk.Frame(kb_frame, bg=SURFACE)
+            r_frame.pack(fill="x", pady=2)
+            for ch in row_chars:
+                b = tk.Button(r_frame, text=ch, bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Consolas", 10, "bold"),
+                              relief="flat", pady=6, command=lambda c=ch: press_char(c))
+                b.pack(side="left", fill="x", expand=True, padx=2)
+                key_buttons.append((b, ch))
+
+        ctrl_row = tk.Frame(kb_frame, bg=SURFACE)
+        ctrl_row.pack(fill="x", pady=2)
+        tk.Button(ctrl_row, text="⇧ SHIFT", bg=BLUE_ACCENT, fg="#ffffff", font=("Helvetica", 8, "bold"),
+                  relief="flat", padx=12, pady=6, command=toggle_shift).pack(side="left", padx=2)
+        tk.Button(ctrl_row, text="SPACE", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 8, "bold"),
+                  relief="flat", pady=6, command=lambda: press_char(" ")).pack(side="left", fill="x", expand=True, padx=2)
+        tk.Button(ctrl_row, text="⌫ DEL", bg=ROSE, fg="#ffffff", font=("Helvetica", 8, "bold"),
+                  relief="flat", padx=12, pady=6, command=lambda: pw_var.set(pw_var.get()[:-1])).pack(side="right", padx=2)
+
+    def _connect_to_wifi(self, ssid, password):
+        self.controller.set_status_led("busy")
+        self.conn_status_lbl.config(text=f"● Connecting to {ssid}...", fg=AMBER)
+
+        def worker():
+            try:
+                cmd = ["sudo", "nmcli", "dev", "wifi", "connect", ssid]
+                if password:
+                    cmd += ["password", password]
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+                if res.returncode == 0:
+                    self.after(0, lambda: self.controller.set_status_led("success"))
+                    self.after(0, self.refresh_connection_banner)
+                    self.after(0, self.scan_networks)
+                    self.after(0, lambda: messagebox.showinfo("Wi-Fi Connected", f"Successfully connected to {ssid}!"))
+                else:
+                    err = res.stderr.strip() or res.stdout.strip()
+                    self.after(0, lambda: self.controller.trigger_error_alert("Wi-Fi Connection Failed", err))
+                    self.after(0, self.refresh_connection_banner)
+            except Exception as e:
+                self.after(0, lambda: self.controller.trigger_error_alert("Wi-Fi Error", str(e)))
+                self.after(0, self.refresh_connection_banner)
+
+        threading.Thread(target=worker, daemon=True).start()
 
 
 if __name__ == "__main__":
