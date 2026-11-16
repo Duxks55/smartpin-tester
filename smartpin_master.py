@@ -8,6 +8,7 @@ import sys
 import json
 import socket
 import traceback
+import re
 from datetime import datetime
 from PIL import Image, ImageTk
 
@@ -124,7 +125,6 @@ class SmartPinMasterApp(tk.Tk):
         self.test_logs = []
         self.frames = {}
         
-        # Pre-load Gemini API key from disk files if not in environment
         load_gemini_api_key()
         
         self.style = ttk.Style()
@@ -852,10 +852,10 @@ class VisionAnalyzerView(tk.Frame):
         pkg_badge.pack(side="right")
 
         comp_title = f"{data.get('part_number', 'Unknown')} — {data.get('component_name', 'Component')}"
-        tk.Label(id_card, text=comp_title, fg=TEXT_MAIN, bg=SURFACE_ALT, font=("Helvetica", 10, "bold"), wraplength=325, justify="left").pack(anchor="w", pady=(3, 2))
-        tk.Label(id_card, text=data.get("function_summary", ""), fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=325, justify="left").pack(anchor="w")
+        tk.Label(id_card, text=comp_title, fg=TEXT_MAIN, bg=SURFACE_ALT, font=("Helvetica", 10, "bold"), wraplength=320, justify="left").pack(anchor="w", pady=(3, 2))
+        tk.Label(id_card, text=data.get("function_summary", ""), fg=TEXT_MUTED, bg=SURFACE_ALT, font=("Helvetica", 8), wraplength=320, justify="left").pack(anchor="w")
 
-        # 2. PINOUT CONFIGURATION CARD (Optimized Stacked Layout - No Horizontal Clipping)
+        # 2. PINOUT CONFIGURATION CARD (Optimized Stacked Layout)
         pinouts = data.get("pinouts", [])
         if pinouts:
             pin_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=8)
@@ -873,22 +873,24 @@ class VisionAnalyzerView(tk.Frame):
                 if desc_txt:
                     tk.Label(row, text=desc_txt, fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 8), wraplength=310, justify="left", anchor="w").pack(fill="x", pady=(1, 0))
 
-        # 3. KEY ELECTRICAL RATINGS CARD
+        # 3. KEY ELECTRICAL RATINGS CARD (Wrapped cells - No Edge Clipping)
         specs = data.get("electrical_specs", [])
         if specs:
-            spec_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=10, pady=8)
+            spec_card = tk.Frame(self.cards_frame, bg=SURFACE_ALT, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=8, pady=8)
             spec_card.pack(fill="x", pady=4)
             tk.Label(spec_card, text="ELECTRICAL RATINGS", fg=AMBER, bg=SURFACE_ALT, font=("Helvetica", 7, "bold")).pack(anchor="w", pady=(0, 4))
             
             grid_f = tk.Frame(spec_card, bg=SURFACE_ALT)
             grid_f.pack(fill="x")
-            grid_f.grid_columnconfigure(0, weight=1)
-            grid_f.grid_columnconfigure(1, weight=1)
+            grid_f.grid_columnconfigure(0, weight=1, uniform="spec_col")
+            grid_f.grid_columnconfigure(1, weight=1, uniform="spec_col")
             for idx, sp in enumerate(specs):
                 cell = tk.Frame(grid_f, bg="#0b1120", padx=6, pady=4)
                 cell.grid(row=idx // 2, column=idx % 2, padx=2, pady=2, sticky="nsew")
-                tk.Label(cell, text=sp.get("parameter", ""), fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 7)).pack(anchor="w")
-                tk.Label(cell, text=sp.get("value", ""), fg=TEXT_MAIN, bg="#0b1120", font=("Consolas", 8, "bold")).pack(anchor="w")
+                tk.Label(cell, text=sp.get("parameter", ""), fg=TEXT_MUTED, bg="#0b1120", font=("Helvetica", 7),
+                         wraplength=142, justify="left", anchor="w").pack(fill="x", anchor="w")
+                tk.Label(cell, text=sp.get("value", ""), fg=TEXT_MAIN, bg="#0b1120", font=("Consolas", 8, "bold"),
+                         wraplength=142, justify="left", anchor="w").pack(fill="x", anchor="w", pady=(1, 0))
 
         # 4. EMBEDDED TECHNICAL DATASHEET CARD
         ds_card = tk.Frame(self.cards_frame, bg="#060911", highlightbackground=BLUE_ACCENT, highlightthickness=1, padx=10, pady=8)
@@ -908,7 +910,7 @@ class VisionAnalyzerView(tk.Frame):
             val = data.get(sec_key, "")
             if val:
                 tk.Label(ds_card, text=sec_title, fg=TEXT_MUTED, bg="#060911", font=("Helvetica", 7, "bold")).pack(anchor="w", pady=(4, 1))
-                tk.Label(ds_card, text=val, fg="#e2e8f0", bg="#060911", font=("Consolas", 8), wraplength=320, justify="left").pack(anchor="w")
+                tk.Label(ds_card, text=val, fg="#e2e8f0", bg="#060911", font=("Consolas", 8), wraplength=315, justify="left").pack(anchor="w")
 
         self._rebind_cards_scroll()
 
@@ -1227,7 +1229,7 @@ class VisionAnalyzerView(tk.Frame):
 
 
 # ==============================================================================
-# REMAINING HARDWARE TESTER VIEWS
+# CARD-BASED TRANSISTOR CHECKER VIEW
 # ==============================================================================
 class TransistorCheckerView(tk.Frame):
     def __init__(self, parent, controller):
@@ -1241,31 +1243,157 @@ class TransistorCheckerView(tk.Frame):
         tk.Button(header, text="← Main Menu", bg=SURFACE_ALT, fg=TEXT_MAIN, font=("Helvetica", 9, "bold"),
                   relief="flat", padx=10, pady=4, cursor="hand2", command=lambda: controller.show_frame("MainDashboard")).pack(side="left", padx=12)
         tk.Label(header, text="TRANSISTOR CHECKER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
+        tk.Label(header, text="TRI-CHANNEL BJT SWEEP", fg=BLUE_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold")).pack(side="left", padx=(8, 0))
         
         body = tk.Frame(self, bg=BG_DARK)
-        body.pack(fill="both", expand=True, padx=20, pady=16)
+        body.pack(fill="both", expand=True, padx=16, pady=12)
         
-        card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=16, pady=16)
-        card.pack(fill="both", expand=True)
+        # Bottom Action Button
+        btn_row = tk.Frame(body, bg=BG_DARK)
+        btn_row.pack(side="bottom", fill="x", pady=(8, 0))
         
-        self.result_box = tk.Text(card, bg="#060911", fg=CYAN_ACCENT, font=("Consolas", 10), height=8, bd=0, relief="flat")
-        self.result_box.pack(fill="both", expand=True, pady=(0, 14))
-        self.result_box.insert("1.0", "Insert BJT or MOSFET into ZIF Socket pins 1-3.\nTap 'Run Component Sweep' to scan multiplexer channels.\n")
+        self.test_btn = tk.Button(btn_row, text="⚡ Run Component Sweep", bg=BLUE_ACCENT, fg="#ffffff",
+                                  activebackground="#2563eb", activeforeground="#ffffff",
+                                  font=("Helvetica", 10, "bold"), relief="flat", pady=9,
+                                  cursor="hand2", command=self.execute_transistor_test)
+        self.test_btn.pack(fill="x")
+
+        # Cards Container
+        self.cards_container = tk.Frame(body, bg=BG_DARK)
+        self.cards_container.pack(side="top", fill="both", expand=True)
         
-        test_btn = tk.Button(card, text="⚡ Run Component Sweep", bg=BLUE_ACCENT, fg="#ffffff", font=("Helvetica", 10, "bold"),
-                             relief="flat", padx=16, pady=8, cursor="hand2", command=self.execute_transistor_test)
-        test_btn.pack(anchor="w")
+        self._render_standby_cards()
+
+    def _clear_cards(self):
+        for w in self.cards_container.winfo_children():
+            w.destroy()
+
+    def _render_standby_cards(self):
+        self._clear_cards()
+        
+        # Top Identity Card
+        id_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=12)
+        id_card.pack(fill="x", pady=(0, 8))
+        
+        top = tk.Frame(id_card, bg=SURFACE)
+        top.pack(fill="x")
+        tk.Label(top, text="DEVICE CLASSIFICATION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(side="left")
+        tk.Label(top, text="STANDBY", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Helvetica", 8, "bold"), padx=8, pady=2).pack(side="right")
+        
+        tk.Label(id_card, text="Ready for BJT Junction Sweep", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(4, 2))
+        tk.Label(id_card, text="Seat NPN or PNP transistor leads into ZIF Socket Pins 0, 1, and 2, then tap 'Run Component Sweep'.",
+                 fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 9), wraplength=720, justify="left").pack(anchor="w")
+
+        # 3-Column ZIF Socket Preview Cards
+        pin_grid = tk.Frame(self.cards_container, bg=BG_DARK)
+        pin_grid.pack(fill="both", expand=True, pady=(0, 8))
+        for idx in range(3):
+            pin_grid.grid_columnconfigure(idx, weight=1, uniform="zif_col")
+            pin_grid.grid_rowconfigure(0, weight=1)
+            p_card = tk.Frame(pin_grid, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=12, pady=12)
+            p_card.grid(row=0, column=idx, padx=(0 if idx == 0 else 4, 0 if idx == 2 else 4), sticky="nsew")
+            tk.Label(p_card, text=f"ZIF PIN {idx}", fg=CYAN_ACCENT, bg=SURFACE, font=("Consolas", 9, "bold")).pack(anchor="w")
+            tk.Label(p_card, text="UNASSIGNED", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(anchor="w", pady=(6, 2))
+            tk.Label(p_card, text="Awaiting sweep", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8)).pack(anchor="w")
+
+    def _render_result_cards(self, raw_result):
+        self._clear_cards()
+        
+        passed = raw_result.startswith("PASSED:")
+        is_empty = raw_result.startswith("EMPTY:")
+        is_fault = raw_result.startswith("FAULT:")
+        
+        badge_text = "PASSED" if passed else ("EMPTY" if is_empty else ("SHORT FAULT" if is_fault else "UNRECOGNIZED"))
+        badge_color = EMERALD if passed else (AMBER if is_empty else ROSE)
+        border_color = EMERALD if passed else (AMBER if is_empty else ROSE)
+
+        # Parse structured values if passed:
+        # "PASSED: NPN BJT | B: Pin 1 • C: Pin 0 • E: Pin 2 | hFE: 215"
+        bjt_type = "No Component Detected"
+        subtitle = raw_result
+        pin_roles = {0: ("--", "No junction"), 1: ("--", "No junction"), 2: ("--", "No junction")}
+        hfe_display = "--"
+
+        if passed:
+            m_type = re.search(r"PASSED:\s*(\w+\s+BJT)", raw_result)
+            m_pins = re.search(r"B:\s*Pin\s*(\d+)\s*•\s*C:\s*Pin\s*(\d+)\s*•\s*E:\s*Pin\s*(\d+)", raw_result)
+            m_hfe = re.search(r"hFE:\s*(\d+)", raw_result)
+            if m_type:
+                bjt_type = f"{m_type.group(1)} Verified"
+            if m_pins:
+                b_pin, c_pin, e_pin = int(m_pins.group(1)), int(m_pins.group(2)), int(m_pins.group(3))
+                pin_roles[b_pin] = ("BASE (B)", "Control junction")
+                pin_roles[c_pin] = ("COLLECTOR (C)", "Primary current path")
+                pin_roles[e_pin] = ("EMITTER (E)", "Reference terminal")
+            if m_hfe:
+                hfe_display = f"{m_hfe.group(1)} hFE"
+            subtitle = "Forward & reverse PN junctions verified across 6-way multiplexer matrix."
+        else:
+            if ":" in raw_result:
+                parts = raw_result.split(":", 1)
+                bjt_type = parts[0].strip().title()
+                subtitle = parts[1].strip()
+
+        # 1. DEVICE CLASSIFICATION CARD
+        id_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=border_color, highlightthickness=1, padx=14, pady=10)
+        id_card.pack(fill="x", pady=(0, 8))
+        
+        top = tk.Frame(id_card, bg=SURFACE)
+        top.pack(fill="x")
+        tk.Label(top, text="DEVICE CLASSIFICATION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(side="left")
+        tk.Label(top, text=badge_text, fg="#ffffff", bg=badge_color, font=("Helvetica", 8, "bold"), padx=8, pady=2).pack(side="right")
+        
+        tk.Label(id_card, text=bjt_type, fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 13, "bold")).pack(anchor="w", pady=(3, 1))
+        tk.Label(id_card, text=subtitle, fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8), wraplength=720, justify="left").pack(anchor="w")
+
+        # 2. 3-COLUMN PINOUT MAPPING CARDS
+        pin_grid = tk.Frame(self.cards_container, bg=BG_DARK)
+        pin_grid.pack(fill="both", expand=True, pady=(0, 8))
+        
+        role_colors = {
+            "BASE (B)": CYAN_ACCENT,
+            "COLLECTOR (C)": EMERALD,
+            "EMITTER (E)": AMBER,
+            "--": TEXT_MUTED
+        }
+
+        for idx in range(3):
+            pin_grid.grid_columnconfigure(idx, weight=1, uniform="zif_col")
+            pin_grid.grid_rowconfigure(0, weight=1)
+            role_title, role_desc = pin_roles[idx]
+            accent = role_colors.get(role_title, TEXT_MUTED)
+            
+            p_card = tk.Frame(pin_grid, bg=SURFACE, highlightbackground=accent if passed else SURFACE_BORDER, highlightthickness=1, padx=12, pady=10)
+            p_card.grid(row=0, column=idx, padx=(0 if idx == 0 else 4, 0 if idx == 2 else 4), sticky="nsew")
+            
+            tk.Label(p_card, text=f"ZIF PIN {idx}", fg=TEXT_MUTED, bg=SURFACE, font=("Consolas", 8, "bold")).pack(anchor="w")
+            tk.Label(p_card, text=role_title, fg=accent, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(anchor="w", pady=(4, 2))
+            tk.Label(p_card, text=role_desc, fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8)).pack(anchor="w")
+
+        # 3. GAIN & TELEMETRY SUMMARY CARD
+        gain_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=8)
+        gain_card.pack(fill="x")
+        
+        tk.Label(gain_card, text="ESTIMATED DC GAIN (hFE)", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(side="left")
+        tk.Label(gain_card, text=hfe_display, fg=CYAN_ACCENT if passed else TEXT_MUTED, bg=SURFACE, font=("Consolas", 11, "bold")).pack(side="right")
 
     def execute_transistor_test(self):
         self.controller.set_status_led("busy")
-        self.result_box.delete("1.0", tk.END)
-        self.result_box.insert(tk.END, "Interrogating ADC bus across pin combinations...\n")
+        self.test_btn.config(state="disabled", text="⚡ Sweeping ZIF Channels...")
+        
+        self._clear_cards()
+        scan_card = tk.Frame(self.cards_container, bg=SURFACE, highlightbackground=CYAN_ACCENT, highlightthickness=1, padx=14, pady=14)
+        scan_card.pack(fill="x", pady=6)
+        tk.Label(scan_card, text="INTERROGATING ADC & MULTIPLEXER MATRIX...", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold")).pack(anchor="w")
+        tk.Label(scan_card, text="Measuring forward & reverse junction drops across ZIF Pins 0, 1, and 2...", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8)).pack(anchor="w", pady=(3, 0))
+
         def run_thread():
             res_text = self.controller.run_hardware_transistor_test()
             self.controller.log_test_result("Transistor", res_text)
             passed = "PASSED" in res_text
             def finish():
-                self.result_box.insert(tk.END, f"\n{res_text}\n")
+                self._render_result_cards(res_text)
+                self.test_btn.config(state="normal", text="⚡ Run Component Sweep")
                 self.controller.set_status_led("success" if passed else "error")
             self.after(0, finish)
         threading.Thread(target=run_thread, daemon=True).start()
@@ -1364,7 +1492,6 @@ class SettingsView(tk.Frame):
         body = tk.Frame(self, bg=BG_DARK)
         body.pack(fill="both", expand=True, padx=20, pady=12)
         
-        # Network & Wi-Fi Card
         net_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
         net_card.pack(fill="x", pady=4)
         
@@ -1377,7 +1504,6 @@ class SettingsView(tk.Frame):
         self.net_info_lbl = tk.Label(net_card, text="Checking interface...", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 10, "bold"))
         self.net_info_lbl.pack(anchor="w", pady=(4, 0))
 
-        # Gemini API Key Status Card
         api_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
         api_card.pack(fill="x", pady=4)
         
@@ -1390,12 +1516,11 @@ class SettingsView(tk.Frame):
         self.api_status_lbl = tk.Label(api_card, text="Checking key...", fg=EMERALD, bg=SURFACE, font=("Helvetica", 9, "bold"))
         self.api_status_lbl.pack(anchor="w", pady=(4, 0))
 
-        # OTA Software Update Card
         update_card = tk.Frame(body, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=10)
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.7.3 (Optimized Stacked Pinout Cards)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.8.0 (Card-Based Transistor & Wrapped Ratings)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
@@ -1458,7 +1583,6 @@ class WifiManagerView(tk.Frame):
                                   relief="flat", padx=10, pady=4, cursor="hand2", command=self.scan_networks)
         self.scan_btn.pack(side="right", padx=12)
 
-        # Active Connection Banner
         banner = tk.Frame(self, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1, padx=14, pady=8)
         banner.pack(fill="x", padx=12, pady=(8, 4))
         
@@ -1468,7 +1592,6 @@ class WifiManagerView(tk.Frame):
         self.ip_badge = tk.Label(banner, text="IP: --", fg=CYAN_ACCENT, bg=SURFACE_ALT, font=("Consolas", 8, "bold"), padx=8, pady=2)
         self.ip_badge.pack(side="right")
 
-        # Scrollable Network List
         list_wrap = tk.Frame(self, bg=BG_DARK)
         list_wrap.pack(fill="both", expand=True, padx=12, pady=4)
         
@@ -1611,7 +1734,6 @@ class WifiManagerView(tk.Frame):
         tk.Button(entry_box, text="Connect ✓", bg=EMERALD, fg="#ffffff", font=("Helvetica", 10, "bold"),
                   relief="flat", padx=14, pady=6, command=submit).pack(side="right")
 
-        # Touch On-Screen Keyboard
         kb_frame = tk.Frame(modal, bg=SURFACE, padx=6, pady=6)
         kb_frame.pack(fill="both", expand=True, padx=8, pady=(0, 8))
 
