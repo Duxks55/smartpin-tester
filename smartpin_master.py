@@ -789,17 +789,29 @@ class VisionAnalyzerView(tk.Frame):
         self._render_placeholder_cards()
 
     def _bind_canvas_touch_scroll(self, canvas, frame):
-        state = {"last_y": 0}
-        def on_press(e): state["last_y"] = e.y_root
+        state = {"start_y": None, "start_top": 0.0}
+        def on_press(e):
+            state["start_y"] = e.y_root
+            state["start_top"] = canvas.yview()[0]
         def on_drag(e):
-            dy = state["last_y"] - e.y_root
-            if abs(dy) > 2:
-                canvas.yview_scroll(int(dy), "units")
-                state["last_y"] = e.y_root
+            if state["start_y"] is None:
+                state["start_y"] = e.y_root
+                state["start_top"] = canvas.yview()[0]
+                return
+            bbox = canvas.bbox("all")
+            if not bbox:
+                return
+            total_h = max(1, bbox[3] - bbox[1])
+            dy = state["start_y"] - e.y_root
+            new_top = max(0.0, min(1.0, state["start_top"] + (dy / total_h)))
+            canvas.yview_moveto(new_top)
+        def on_release(e):
+            state["start_y"] = None
         def bind_recursive(w):
             if isinstance(w, tk.Button): return
-            w.bind("<ButtonPress-1>", on_press, add="+")
-            w.bind("<B1-Motion>", on_drag, add="+")
+            w.bind("<ButtonPress-1>", on_press)
+            w.bind("<B1-Motion>", on_drag)
+            w.bind("<ButtonRelease-1>", on_release)
             for c in w.winfo_children():
                 bind_recursive(c)
         self._rebind_cards_scroll = lambda: bind_recursive(frame)
@@ -920,9 +932,25 @@ class VisionAnalyzerView(tk.Frame):
                           bd=0, relief="flat", wrap="word", padx=14, pady=12)
         ds_text.pack(fill="both", expand=True)
 
-        t_state = {"y": 0}
-        ds_text.bind("<ButtonPress-1>", lambda e: t_state.update({"y": e.y}))
-        ds_text.bind("<B1-Motion>", lambda e: (ds_text.yview_scroll(int((t_state["y"] - e.y) / 4), "units"), t_state.update({"y": e.y})))
+        t_state = {"start_y": None, "start_top": 0.0}
+        def ds_press(e):
+            t_state["start_y"] = e.y_root
+            t_state["start_top"] = ds_text.yview()[0]
+            return "break"
+        def ds_drag(e):
+            if t_state["start_y"] is None:
+                ds_press(e)
+                return "break"
+            dy = t_state["start_y"] - e.y_root
+            new_top = max(0.0, min(1.0, t_state["start_top"] + (dy / 450.0)))
+            ds_text.yview_moveto(new_top)
+            return "break"
+        def ds_release(e):
+            t_state["start_y"] = None
+            return "break"
+        ds_text.bind("<ButtonPress-1>", ds_press)
+        ds_text.bind("<B1-Motion>", ds_drag)
+        ds_text.bind("<ButtonRelease-1>", ds_release)
 
         pin_lines = "\n".join([f"  • Pin {p.get('pin')}: {p.get('name')} — {p.get('description')}" for p in data.get("pinouts", [])])
         spec_lines = "\n".join([f"  • {s.get('parameter')}: {s.get('value')}" for s in data.get("electrical_specs", [])])
@@ -1363,7 +1391,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.7.1 (v1beta Structured Vision Enabled)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.7.2 (Clamped Touch Datasheet Scroll)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
@@ -1450,17 +1478,28 @@ class WifiManagerView(tk.Frame):
         self._bind_scroll()
 
     def _bind_scroll(self):
-        st = {"y": 0}
-        def press(e): st["y"] = e.y_root
+        st = {"start_y": None, "start_top": 0.0}
+        def press(e):
+            st["start_y"] = e.y_root
+            st["start_top"] = self.net_canvas.yview()[0]
         def drag(e):
-            dy = st["y"] - e.y_root
-            if abs(dy) > 2:
-                self.net_canvas.yview_scroll(int(dy), "units")
-                st["y"] = e.y_root
+            if st["start_y"] is None:
+                press(e)
+                return
+            bbox = self.net_canvas.bbox("all")
+            if not bbox:
+                return
+            total_h = max(1, bbox[3] - bbox[1])
+            dy = st["start_y"] - e.y_root
+            new_top = max(0.0, min(1.0, st["start_top"] + (dy / total_h)))
+            self.net_canvas.yview_moveto(new_top)
+        def release(e):
+            st["start_y"] = None
         def bind_all(w):
             if isinstance(w, tk.Button): return
-            w.bind("<ButtonPress-1>", press, add="+")
-            w.bind("<B1-Motion>", drag, add="+")
+            w.bind("<ButtonPress-1>", press)
+            w.bind("<B1-Motion>", drag)
+            w.bind("<ButtonRelease-1>", release)
             for c in w.winfo_children():
                 bind_all(c)
         self._rebind_list = lambda: bind_all(self.net_list_frame)
