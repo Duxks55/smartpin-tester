@@ -8,6 +8,7 @@ import sys
 import urllib.request
 import json
 import socket
+import traceback
 from datetime import datetime
 from PIL import Image, ImageTk
 import numpy as np
@@ -78,6 +79,7 @@ class SmartPinMasterApp(tk.Tk):
         
         self.setup_led_gpio()
         self.setup_status_rgb()
+        self.install_global_error_hooks()
         
         self.container = tk.Frame(self, bg=BG_DARK)
         self.container.pack(fill="both", expand=True)
@@ -95,6 +97,31 @@ class SmartPinMasterApp(tk.Tk):
         
         self.show_frame("MainDashboard")
         self.start_iot_server()
+
+        # If hardware bus failed to load at startup, flag Red status immediately
+        if not HARDWARE_AVAILABLE:
+            self.set_status_led("error")
+
+    def install_global_error_hooks(self):
+        """Routes any unhandled UI or background exception to the Red error LED."""
+        def tk_error_handler(exc, val, tb):
+            traceback.print_exception(exc, val, tb)
+            self.set_status_led("error")
+
+        def sys_error_handler(exc, val, tb):
+            traceback.print_exception(exc, val, tb)
+            try:
+                self.after(0, lambda: self.set_status_led("error"))
+            except Exception:
+                pass
+
+        self.report_callback_exception = tk_error_handler
+        sys.excepthook = sys_error_handler
+
+    def trigger_error_alert(self, title, message):
+        """Sets RGB LED to Red error state and displays an error dialog."""
+        self.set_status_led("error")
+        messagebox.showerror(title, message)
 
     def setup_led_gpio(self):
         self.led_pins = [21, 25]
@@ -133,33 +160,41 @@ class SmartPinMasterApp(tk.Tk):
                 pass
 
     def set_status_led(self, state):
-        """Sets system status LED: 'idle', 'busy', 'success', 'error', or 'off'."""
+        """
+        Sets system status LED with extended hold durations:
+        - 'idle': Solid Cyan (System Ready)
+        - 'busy': Blue/Magenta pulse (Scanning / Processing)
+        - 'success': Solid Green held for 10 seconds
+        - 'error': 3 attention pulses followed by Solid Red held for 12 seconds
+        """
         if getattr(self, "rgb_anim_id", None):
             self.after_cancel(self.rgb_anim_id)
             self.rgb_anim_id = None
 
         if state == "idle":
-            self._write_rgb(0, 1, 1)  # Solid Cyan: System Ready
+            self._write_rgb(0, 1, 1)  # Solid Cyan
         elif state == "busy":
-            self._blink_rgb_loop((0, 0, 1), (1, 0, 1), interval_ms=200)  # Blue/Magenta pulse
+            self._blink_rgb_loop((0, 0, 1), (1, 0, 1), interval_ms=220)  # Blue/Magenta pulse
         elif state == "success":
-            self._write_rgb(0, 1, 0)  # Solid Green
-            self.rgb_anim_id = self.after(4000, lambda: self.set_status_led("idle"))
+            self._write_rgb(0, 1, 0)  # Solid Green held for 10s
+            self.rgb_anim_id = self.after(10000, lambda: self.set_status_led("idle"))
         elif state == "error":
-            self._flash_error_loop(6)  # 3 fast red blinks, then back to idle
+            self._flash_error_loop(6)  # 3 fast pulses, then Solid Red held for 12s
         else:
             self._write_rgb(0, 0, 0)
 
-    def _blink_rgb_loop(self, color1, color2, interval_ms=250, toggle=True):
+    def _blink_rgb_loop(self, color1, color2, interval_ms=220, toggle=True):
         self._write_rgb(*(color1 if toggle else color2))
         self.rgb_anim_id = self.after(interval_ms, lambda: self._blink_rgb_loop(color1, color2, interval_ms, not toggle))
 
     def _flash_error_loop(self, remaining_steps):
         if remaining_steps <= 0:
-            self.set_status_led("idle")
+            # Hold Solid Red for 12 seconds so any error is clearly visible
+            self._write_rgb(1, 0, 0)
+            self.rgb_anim_id = self.after(12000, lambda: self.set_status_led("idle"))
             return
         self._write_rgb(1 if remaining_steps % 2 == 0 else 0, 0, 0)
-        self.rgb_anim_id = self.after(200, lambda: self._flash_error_loop(remaining_steps - 1))
+        self.rgb_anim_id = self.after(180, lambda: self._flash_error_loop(remaining_steps - 1))
 
     def set_led_state(self, pin, state):
         if HARDWARE_AVAILABLE:
@@ -168,8 +203,10 @@ class SmartPinMasterApp(tk.Tk):
                 return True
             except Exception as e:
                 print(f"LED State Error: {e}")
+                self.set_status_led("error")
                 return False
-        return True
+        self.set_status_led("error")
+        return False
 
     def show_frame(self, frame_name):
         for name, frame in self.frames.items():
@@ -244,6 +281,9 @@ class SmartPinMasterApp(tk.Tk):
                             if v > 0.02:  
                                 any_connection = True
 
+                if not readings:
+                    return "ERROR: ADS1115 ADC read failed on I2C bus."
+
                 if not any_connection:
                     return "EMPTY: No component seated in ZIF socket."
                 
@@ -315,7 +355,7 @@ class SmartPinMasterApp(tk.Tk):
             except Exception as e:
                 return f"Hardware Exception: {e}"
         else:
-            return "Simulation Mode: No physical ADC bus found. Socket is empty."
+            return "ERROR: Hardware bus unavailable (Simulation Mode)."
 
     def start_iot_server(self):
         app_instance = self
@@ -390,7 +430,7 @@ class SmartPinMasterApp(tk.Tk):
                         self.wfile.write(json.dumps(app_instance.test_logs).encode("utf-8"))
                     elif path == '/run':
                         test_type = query_params.get('type', [''])[0]
-                        res = "[System] Null"
+                        res = "[System] Error: Unknown remote command"
                         app_instance.after(0, lambda: app_instance.set_status_led("busy"))
                         if test_type == 'transistor':
                             res = app_instance.run_hardware_transistor_test()
@@ -409,6 +449,8 @@ class SmartPinMasterApp(tk.Tk):
                                 res = str(e)
                                 app_instance.after(0, lambda: app_instance.set_status_led("error"))
                             app_instance.log_test_result("I2C Subsystem", "Bus interrogated")
+                        else:
+                            app_instance.after(0, lambda: app_instance.set_status_led("error"))
                         self.send_response(200)
                         self.send_header("Content-type", "application/json")
                         self.end_headers()
@@ -422,6 +464,7 @@ class SmartPinMasterApp(tk.Tk):
             threading.Thread(target=server.serve_forever, daemon=True).start()
         except Exception as e:
             print(f"IoT Server Error: {e}")
+            self.set_status_led("error")
 
 
 # ==============================================================================
@@ -432,7 +475,6 @@ class MainDashboard(tk.Frame):
         super().__init__(parent, bg=BG_DARK)
         self.controller = controller
         
-        # Header
         header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -512,9 +554,6 @@ class MainDashboard(tk.Frame):
         self.scrollable_content.grid_columnconfigure(0, weight=1)
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
-    def on_show(self):
-        self.controller.set_status_led("idle")
-
     def create_module_card(self, parent, title, desc, accent_color, badge_text, command, row, col):
         card = tk.Frame(parent, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         card.grid(row=row, column=col, padx=6, pady=6, sticky="nsew")
@@ -558,7 +597,10 @@ class MainDashboard(tk.Frame):
 
     def open_link(self, url):
         import webbrowser
-        webbrowser.open(url)
+        try:
+            webbrowser.open(url)
+        except Exception as e:
+            self.controller.trigger_error_alert("Browser Error", f"Failed to open URL: {e}")
 
     def run_i2c_check(self):
         self.controller.set_status_led("busy")
@@ -568,8 +610,7 @@ class MainDashboard(tk.Frame):
             messagebox.showinfo("I2C Diagnostic Bus", output)
             self.controller.log_test_result("Diagnostics", "I2C Bus Interrogated")
         except Exception as e:
-            self.controller.set_status_led("error")
-            messagebox.showerror("Error", f"Failed: {e}")
+            self.controller.trigger_error_alert("I2C Error", f"Failed to scan I2C bus: {e}")
 
 
 # ==============================================================================
@@ -697,7 +738,6 @@ class VisionAnalyzerView(tk.Frame):
     def on_show(self):
         self.is_streaming = True
         self.camera_ready = False
-        self.controller.set_status_led("idle")
         self.feed_status.config(text="● CONNECTING...", fg=AMBER)
         self.video_label.config(image="", text="Starting Camera Module 3...")
         self.results_box.delete("1.0", tk.END)
@@ -739,6 +779,7 @@ class VisionAnalyzerView(tk.Frame):
         except Exception as e:
             err_text = str(e)
             self.after(0, lambda: self.controller.set_status_led("error"))
+            self.after(0, lambda: self.feed_status.config(text="● SENSOR ERROR", fg=ROSE))
             self.after(0, lambda: self.video_label.config(text=f"Camera Error:\n{err_text[:100]}"))
 
     def _on_camera_started(self):
@@ -758,7 +799,9 @@ class VisionAnalyzerView(tk.Frame):
         if self.camera_ready and self.picam2:
             try:
                 frame = self.picam2.capture_array()
-            except Exception: pass
+            except Exception as e:
+                print(f"Frame capture error: {e}")
+                self.controller.set_status_led("error")
 
         if frame is not None:
             self.current_frame = frame
@@ -777,7 +820,10 @@ class VisionAnalyzerView(tk.Frame):
                 self.results_box.insert(tk.END, "[Focus] Locked to Macro Close-Up (~7cm).\n")
                 self.results_box.see(tk.END)
             except Exception as e:
+                self.controller.set_status_led("error")
                 self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
+        else:
+            self.controller.set_status_led("error")
 
     def trigger_autofocus(self):
         if self.picam2:
@@ -786,12 +832,14 @@ class VisionAnalyzerView(tk.Frame):
                 self.results_box.insert(tk.END, "[Focus] Continuous Macro Sweep triggered.\n")
                 self.results_box.see(tk.END)
             except Exception as e:
+                self.controller.set_status_led("error")
                 self.results_box.insert(tk.END, f"[Focus Error] {e}\n")
+        else:
+            self.controller.set_status_led("error")
 
     def trigger_analysis(self):
         if not self.camera_ready or not self.picam2 or self.current_frame is None:
-            self.controller.set_status_led("error")
-            messagebox.showwarning("Notice", "Camera is not ready yet.")
+            self.controller.trigger_error_alert("Camera Error", "Camera feed is not active or hardware failed to initialize.")
             return
 
         self.controller.set_status_led("busy")
@@ -830,7 +878,8 @@ class VisionAnalyzerView(tk.Frame):
                 contents=[genai.types.Part.from_bytes(data=img_bytes, mime_type="image/jpeg"), prompt]
             )
             return response.text
-        except Exception:
+        except Exception as e:
+            print(f"Gemini Vision API error: {e}")
             return None
 
     def _run_inference_pipeline(self, frame_rgb):
@@ -851,7 +900,11 @@ class VisionAnalyzerView(tk.Frame):
                         package_detected = pkg.upper()
                         break
                 part_detected = "Identified"
-                scan_succeeded = True
+                # Flag as error if AI explicitly states it cannot identify or sees nothing
+                if "no electronic component" in lower or "cannot identify" in lower or "unable to identify" in lower:
+                    scan_succeeded = False
+                else:
+                    scan_succeeded = True
             else:
                 import pytesseract
                 gray = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2GRAY)
@@ -868,10 +921,11 @@ class VisionAnalyzerView(tk.Frame):
                     for line in lines:
                         output_logs.append(f"• {line}")
                 else:
-                    output_logs.append("No alphanumeric markings found.\nCheck lighting glint angle.")
+                    scan_succeeded = False
+                    output_logs.append("ERROR: Cloud AI unreachable & no local OCR markings found.\nCheck Wi-Fi, API key, or lighting angle.")
 
             report_text = "\n".join(output_logs)
-            self.controller.log_test_result("Optical Identifier", "Scan completed")
+            self.controller.log_test_result("Optical Identifier", "Scan completed" if scan_succeeded else "Scan failed")
         except Exception as e:
             report_text = f"Inference Error: {e}"
             scan_succeeded = False
@@ -964,13 +1018,21 @@ class CapacitorAnalyzerView(tk.Frame):
         self.result_box.delete("1.0", tk.END)
         self.result_box.insert(tk.END, "Charging RC timing network...\n")
         def run_thread():
-            time.sleep(0.8)
-            res = "\nMEASUREMENT COMPLETE\nCapacitance: 470.2 µF\nNominal ESR: 0.12 Ω\n"
-            self.controller.log_test_result("Capacitor", "Measured 470.2uF")
-            def finish():
-                self.result_box.insert(tk.END, res)
-                self.controller.set_status_led("success")
-            self.after(0, finish)
+            try:
+                if not HARDWARE_AVAILABLE:
+                    raise RuntimeError("Hardware bus unavailable for capacitor measurement.")
+                time.sleep(0.8)
+                res = "\nMEASUREMENT COMPLETE\nCapacitance: 470.2 µF\nNominal ESR: 0.12 Ω\n"
+                self.controller.log_test_result("Capacitor", "Measured 470.2uF")
+                def finish():
+                    self.result_box.insert(tk.END, res)
+                    self.controller.set_status_led("success")
+                self.after(0, finish)
+            except Exception as e:
+                def fail():
+                    self.result_box.insert(tk.END, f"\nERROR: {e}\n")
+                    self.controller.set_status_led("error")
+                self.after(0, fail)
         threading.Thread(target=run_thread, daemon=True).start()
 
 
@@ -1015,13 +1077,17 @@ class LedBlinkerManagerView(tk.Frame):
 
     def turn_on(self, pin, card):
         self.blinking_active[pin] = False
-        self.controller.set_led_state(pin, True)
-        card.status_lbl.config(text="● HIGH (ACTIVE)", fg=EMERALD)
+        if self.controller.set_led_state(pin, True):
+            card.status_lbl.config(text="● HIGH (ACTIVE)", fg=EMERALD)
+        else:
+            card.status_lbl.config(text="● GPIO ERROR", fg=ROSE)
 
     def turn_off(self, pin, card):
         self.blinking_active[pin] = False
-        self.controller.set_led_state(pin, False)
-        card.status_lbl.config(text="● LOW (IDLE)", fg=TEXT_MUTED)
+        if self.controller.set_led_state(pin, False):
+            card.status_lbl.config(text="● LOW (IDLE)", fg=TEXT_MUTED)
+        else:
+            card.status_lbl.config(text="● GPIO ERROR", fg=ROSE)
 
     def toggle_blink(self, pin, card):
         if self.blinking_active.get(pin, False):
@@ -1035,7 +1101,10 @@ class LedBlinkerManagerView(tk.Frame):
             state = False
             while self.blinking_active.get(pin, False):
                 state = not state
-                self.controller.set_led_state(pin, state)
+                if not self.controller.set_led_state(pin, state):
+                    self.blinking_active[pin] = False
+                    self.after(0, lambda: card.status_lbl.config(text="● GPIO ERROR", fg=ROSE))
+                    break
                 time.sleep(0.5)
 
         threading.Thread(target=blink_loop, daemon=True).start()
@@ -1068,7 +1137,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.3.0 (RGB Status Telemetry)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.4.0 (Extended RGB Diagnostics)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
@@ -1092,7 +1161,7 @@ class SettingsView(tk.Frame):
                     self.after(0, lambda: messagebox.showinfo("Update", "Applied latest update! Restarting..."))
                     os.execv(sys.executable, [sys.executable] + sys.argv)
                 else:
-                    self.after(0, lambda: self.controller.set_status_led("idle"))
+                    self.after(0, lambda: self.controller.set_status_led("success"))
                     self.after(0, lambda: self.update_status_lbl.config(text="Firmware up to date.", fg=EMERALD))
             except Exception as e:
                 self.after(0, lambda: self.controller.set_status_led("error"))
