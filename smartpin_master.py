@@ -299,8 +299,8 @@ class SmartPinMasterApp(tk.Tk):
         return hostname, ip_address
 
     def run_hardware_transistor_test(self):
-        mux1_pins = [4, 5, 6]  # High-side 3.3V Anode source
-        mux2_pins = [7, 8, 9]  # Low-side GND Cathode sink
+        mux1_pins = [4, 5, 6]  # Low-side GND Cathode sink
+        mux2_pins = [7, 8, 9]  # High-side 3.3V Anode source
         
         if HARDWARE_AVAILABLE:
             try:
@@ -320,8 +320,8 @@ class SmartPinMasterApp(tk.Tk):
 
                 def get_voltage(anode_pin, cathode_pin):
                     try:
-                        set_mux(mux1_pins, anode_pin)    # High-side 3.3V source
-                        set_mux(mux2_pins, cathode_pin)  # Low-side GND sink
+                        set_mux(mux2_pins, anode_pin)    # High-side 3.3V source
+                        set_mux(mux1_pins, cathode_pin)  # Low-side GND sink
                         time.sleep(0.03)
                         return chan.voltage
                     except OSError:
@@ -339,16 +339,16 @@ class SmartPinMasterApp(tk.Tk):
                 if not readings:
                     return "ERROR: ADS1115 ADC read failed on I2C bus."
 
-                active_junctions = [v for v in readings.values() if 0.15 < v < 2.4]
+                active_junctions = [v for v in readings.values() if 0.35 < v < 2.2]
                 if not active_junctions:
                     return "EMPTY: No component seated in ZIF socket."
 
-                shorted_count = sum(1 for v in readings.values() if v < 0.05)
+                shorted_count = sum(1 for v in readings.values() if v < 0.01)
                 if shorted_count >= 4:
                     return "FAULT: Short circuit detected between pins."
 
                 def is_conducting(v):
-                    return 0.12 < v < 2.4
+                    return 0.35 < v < 2.2
 
                 found_type = None
                 match_pin_b, match_pin_c, match_pin_e = None, None, None
@@ -1123,7 +1123,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.5.3 (Mux Polarity Aligned)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.5.4 (Calibrated BJT Thresholds)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
