@@ -5,63 +5,73 @@ import threading
 import os
 import time
 import sys
-import urllib.request
 import json
 import socket
 import traceback
 from datetime import datetime
 from PIL import Image, ImageTk
-import numpy as np
-
-# Set up I2C permissions for non-root users if needed
-try:
-    os.system("sudo chmod 666 /dev/i2c-*")
-except Exception:
-    pass
-
-# Hardware libraries (GPIO, ADC)
-try:
-    import board
-    import busio
-    import RPi.GPIO as GPIO
-    import adafruit_ads1x15.ads1115 as ADS
-    from adafruit_ads1x15.analog_in import AnalogIn
-    HARDWARE_AVAILABLE = True
-except (ImportError, NotImplementedError) as e:
-    print(f"Hardware initialization note: {e}")
-    HARDWARE_AVAILABLE = False
-
-# Computer Vision & Machine Learning libraries
-try:
-    import cv2
-    import pytesseract
-    from ultralytics import YOLO
-    CV_AVAILABLE = True
-except ImportError as e:
-    print(f"Vision package note: {e}")
-    CV_AVAILABLE = False
-
-# Picamera2 backend for Camera Module 3
-try:
-    from picamera2 import Picamera2
-    PICAM2_AVAILABLE = True
-except ImportError:
-    PICAM2_AVAILABLE = False
 
 # ==============================================================================
 # DESIGN SYSTEM PALETTE
 # ==============================================================================
-BG_DARK = "#090d16"         # Deep canvas background
-SURFACE = "#111827"         # Elevated card surfaces
-SURFACE_ALT = "#1e293b"     # Secondary containers & inputs
-SURFACE_BORDER = "#1f2937"  # Clean outline stroke
-TEXT_MAIN = "#f8fafc"       # High-contrast primary headers
-TEXT_MUTED = "#94a3b8"      # Secondary labels & descriptions
-CYAN_ACCENT = "#06b6d4"     # Primary action accent
-BLUE_ACCENT = "#3b82f6"     # Informational actions
-EMERALD = "#10b981"         # Success & hardware confirmations
-ROSE = "#f43f5e"            # Warning & shutdown actions
-AMBER = "#f59e0b"           # Status notices & focus sweeps
+BG_DARK = "#090d16"
+SURFACE = "#111827"
+SURFACE_ALT = "#1e293b"
+SURFACE_BORDER = "#1f2937"
+TEXT_MAIN = "#f8fafc"
+TEXT_MUTED = "#94a3b8"
+CYAN_ACCENT = "#06b6d4"
+BLUE_ACCENT = "#3b82f6"
+EMERALD = "#10b981"
+ROSE = "#f43f5e"
+AMBER = "#f59e0b"
+
+# Global module flags (populated asynchronously during splash screen)
+HARDWARE_AVAILABLE = False
+CV_AVAILABLE = False
+PICAM2_AVAILABLE = False
+
+board = None
+busio = None
+GPIO = None
+ADS = None
+AnalogIn = None
+cv2 = None
+pytesseract = None
+YOLO = None
+np = None
+Picamera2 = None
+
+
+class BootSplashScreen(tk.Frame):
+    """Instant lightweight splash screen rendered <200ms after Python starts."""
+    def __init__(self, parent):
+        super().__init__(parent, bg=BG_DARK)
+        
+        center_box = tk.Frame(self, bg=BG_DARK)
+        center_box.place(relx=0.5, rely=0.48, anchor="center")
+        
+        title_row = tk.Frame(center_box, bg=BG_DARK)
+        title_row.pack(pady=(0, 6))
+        tk.Label(title_row, text="SMARTPIN", fg=TEXT_MAIN, bg=BG_DARK, font=("Helvetica", 24, "bold")).pack(side="left")
+        tk.Label(title_row, text="STUDIO OS", fg=CYAN_ACCENT, bg=BG_DARK, font=("Helvetica", 18, "bold")).pack(side="left", padx=(8, 0))
+        
+        tk.Label(center_box, text="Hardware Diagnostics & Optical Vision Suite", fg=TEXT_MUTED, bg=BG_DARK, font=("Helvetica", 10)).pack(pady=(0, 24))
+        
+        # Custom sleek progress bar track
+        self.bar_width = 420
+        self.bar_height = 10
+        self.progress_canvas = tk.Canvas(center_box, width=self.bar_width, height=self.bar_height, bg=SURFACE_ALT, highlightthickness=1, highlightbackground=SURFACE_BORDER)
+        self.progress_canvas.pack(pady=(0, 12))
+        self.fill_rect = self.progress_canvas.create_rectangle(0, 0, 10, self.bar_height, fill=CYAN_ACCENT, width=0)
+        
+        self.status_lbl = tk.Label(center_box, text="Initializing core display...", fg=TEXT_MUTED, bg=BG_DARK, font=("Consolas", 9))
+        self.status_lbl.pack()
+
+    def set_progress(self, percent, message):
+        fill_px = int((max(0, min(100, percent)) / 100.0) * self.bar_width)
+        self.progress_canvas.coords(self.fill_rect, 0, 0, fill_px, self.bar_height)
+        self.status_lbl.config(text=message)
 
 
 class SmartPinMasterApp(tk.Tk):
@@ -73,18 +83,78 @@ class SmartPinMasterApp(tk.Tk):
         self.configure(bg=BG_DARK)
         
         self.test_logs = []
+        self.frames = {}
         
         self.style = ttk.Style()
         self.style.theme_use("clam")
         
-        self.setup_led_gpio()
-        self.setup_status_rgb()
-        self.install_global_error_hooks()
-        
         self.container = tk.Frame(self, bg=BG_DARK)
         self.container.pack(fill="both", expand=True)
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
         
-        self.frames = {}
+        # Render splash screen immediately before importing heavy libraries
+        self.splash = BootSplashScreen(self.container)
+        self.splash.grid(row=0, column=0, sticky="nsew")
+        self.splash.tkraise()
+        self.update_idletasks()
+        
+        self.install_global_error_hooks()
+        
+        # Load heavy libraries & build views in background so UI stays responsive
+        threading.Thread(target=self._async_boot_sequence, daemon=True).start()
+
+    def _update_splash(self, pct, msg):
+        self.after(0, lambda: self.splash.set_progress(pct, msg))
+
+    def _async_boot_sequence(self):
+        global HARDWARE_AVAILABLE, CV_AVAILABLE, PICAM2_AVAILABLE
+        global board, busio, GPIO, ADS, AnalogIn, cv2, pytesseract, YOLO, np, Picamera2
+
+        self._update_splash(15, "Configuring I2C & GPIO hardware interfaces...")
+        try:
+            os.system("sudo chmod 666 /dev/i2c-* 2>/dev/null")
+        except Exception:
+            pass
+
+        try:
+            import board as _board
+            import busio as _busio
+            import RPi.GPIO as _GPIO
+            import adafruit_ads1x15.ads1115 as _ADS
+            from adafruit_ads1x15.analog_in import AnalogIn as _AnalogIn
+            board, busio, GPIO, ADS, AnalogIn = _board, _busio, _GPIO, _ADS, _AnalogIn
+            HARDWARE_AVAILABLE = True
+        except Exception as e:
+            print(f"Hardware note: {e}")
+            HARDWARE_AVAILABLE = False
+
+        self.after(0, self.setup_led_gpio)
+        self.after(0, self.setup_status_rgb)
+
+        self._update_splash(40, "Loading numerical & OpenCV vision pipelines...")
+        try:
+            import numpy as _np
+            import cv2 as _cv2
+            import pytesseract as _pytesseract
+            np, cv2, pytesseract = _np, _cv2, _pytesseract
+            CV_AVAILABLE = True
+        except Exception as e:
+            print(f"CV note: {e}")
+            CV_AVAILABLE = False
+
+        self._update_splash(65, "Initializing IMX708 Camera Module 3 driver...")
+        try:
+            from picamera2 import Picamera2 as _Picamera2
+            Picamera2 = _Picamera2
+            PICAM2_AVAILABLE = True
+        except Exception:
+            PICAM2_AVAILABLE = False
+
+        self._update_splash(85, "Building SmartPin Studio workspaces...")
+        self.after(0, self._finalize_gui_startup)
+
+    def _finalize_gui_startup(self):
         for F in (MainDashboard, TransistorCheckerView, CapacitorAnalyzerView, 
                   LedBlinkerManagerView, VisionAnalyzerView, SettingsView, WifiManagerView):
             frame_name = F.__name__
@@ -92,14 +162,15 @@ class SmartPinMasterApp(tk.Tk):
             self.frames[frame_name] = frame
             frame.grid(row=0, column=0, sticky="nsew")
             
-        self.container.grid_rowconfigure(0, weight=1)
-        self.container.grid_columnconfigure(0, weight=1)
-        
-        self.show_frame("MainDashboard")
+        self.splash.set_progress(100, "System Ready.")
         self.start_iot_server()
+        self.after(200, self._finish_splash)
+
+    def _finish_splash(self):
+        self.show_frame("MainDashboard")
+        self.splash.destroy()
 
     def install_global_error_hooks(self):
-        """Routes any unhandled UI or background exception to the Red error LED."""
         def tk_error_handler(exc, val, tb):
             traceback.print_exception(exc, val, tb)
             self.set_status_led("error")
@@ -115,7 +186,6 @@ class SmartPinMasterApp(tk.Tk):
         sys.excepthook = sys_error_handler
 
     def trigger_error_alert(self, title, message):
-        """Sets RGB LED to Red error state and displays an error dialog."""
         self.set_status_led("error")
         messagebox.showerror(title, message)
 
@@ -141,15 +211,14 @@ class SmartPinMasterApp(tk.Tk):
                 GPIO.setwarnings(False)
                 for pin in self.rgb_pins.values():
                     GPIO.setup(pin, GPIO.OUT)
-                    GPIO.output(pin, GPIO.HIGH)  # HIGH = OFF for Common Anode
+                    GPIO.output(pin, GPIO.HIGH)
             except Exception as e:
                 print(f"RGB Setup Error: {e}")
         self.set_status_led("idle")
 
     def _write_rgb(self, r, g, b):
-        if HARDWARE_AVAILABLE:
+        if HARDWARE_AVAILABLE and GPIO:
             try:
-                # Common Anode RGB LED (Longest leg -> 3.3V): LOW = ON, HIGH = OFF
                 GPIO.output(self.rgb_pins["r"], GPIO.LOW if r else GPIO.HIGH)
                 GPIO.output(self.rgb_pins["g"], GPIO.LOW if g else GPIO.HIGH)
                 GPIO.output(self.rgb_pins["b"], GPIO.LOW if b else GPIO.HIGH)
@@ -157,13 +226,6 @@ class SmartPinMasterApp(tk.Tk):
                 pass
 
     def set_status_led(self, state):
-        """
-        Sets system status LED with extended hold durations:
-        - 'idle': Solid Cyan (System Ready)
-        - 'busy': Blue/Magenta pulse (Scanning / Processing)
-        - 'success': Solid Green held for 10 seconds
-        - 'error': 3 attention pulses followed by Solid Red held for 12 seconds
-        """
         if getattr(self, "rgb_anim_id", None):
             self.after_cancel(self.rgb_anim_id)
             self.rgb_anim_id = None
@@ -171,7 +233,7 @@ class SmartPinMasterApp(tk.Tk):
         if state == "idle":
             self._write_rgb(0, 1, 1)  # Solid Cyan
         elif state == "busy":
-            self._blink_rgb_loop((0, 0, 1), (1, 0, 1), interval_ms=220)  # Blue/Magenta pulse
+            self._blink_rgb_loop((0, 0, 1), (1, 0, 1), interval_ms=220)
         elif state == "success":
             self._write_rgb(0, 1, 0)  # Solid Green held for 10s
             self.rgb_anim_id = self.after(10000, lambda: self.set_status_led("idle"))
@@ -186,7 +248,6 @@ class SmartPinMasterApp(tk.Tk):
 
     def _flash_error_loop(self, remaining_steps):
         if remaining_steps <= 0:
-            # Hold Solid Red for 12 seconds so any error is clearly visible
             self._write_rgb(1, 0, 0)
             self.rgb_anim_id = self.after(12000, lambda: self.set_status_led("idle"))
             return
@@ -552,7 +613,6 @@ class MainDashboard(tk.Frame):
         self.scrollable_content.grid_columnconfigure(1, weight=1)
 
     def on_show(self):
-        """Immediately cancels active timers and resets RGB status to idle Cyan upon return."""
         self.controller.set_status_led("idle")
 
     def create_module_card(self, parent, title, desc, accent_color, badge_text, command, row, col):
@@ -629,7 +689,6 @@ class VisionAnalyzerView(tk.Frame):
         self.current_frame = None
         self.loop_id = None
         
-        # Header
         header = tk.Frame(self, bg=SURFACE, height=48, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         header.pack(fill="x", side="top")
         header.pack_propagate(False)
@@ -643,14 +702,12 @@ class VisionAnalyzerView(tk.Frame):
         tk.Label(title_box, text="OPTICAL IDENTIFIER", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 11, "bold")).pack(side="left")
         tk.Label(title_box, text="IMX708 MACRO AI", fg=CYAN_ACCENT, bg=SURFACE, font=("Helvetica", 9, "bold")).pack(side="left", padx=(6, 0))
         
-        # 50/50 Workspace Grid
         content = tk.Frame(self, bg=BG_DARK, padx=8, pady=6)
         content.pack(fill="both", expand=True)
         content.grid_columnconfigure(0, weight=1, uniform="half")
         content.grid_columnconfigure(1, weight=1, uniform="half")
         content.grid_rowconfigure(0, weight=1)
         
-        # Left Side: Camera Viewport Card
         cam_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         cam_card.grid(row=0, column=0, sticky="nsew", padx=4, pady=2)
         
@@ -663,11 +720,9 @@ class VisionAnalyzerView(tk.Frame):
         self.video_label = tk.Label(cam_card, text="Connecting Camera Module 3...", bg="#060911", fg=TEXT_MUTED, font=("Helvetica", 10))
         self.video_label.pack(fill="both", expand=True, padx=6, pady=(2, 6))
         
-        # Right Side: Telemetry Panel Card
         panel_card = tk.Frame(content, bg=SURFACE, highlightbackground=SURFACE_BORDER, highlightthickness=1)
         panel_card.grid(row=0, column=1, sticky="nsew", padx=4, pady=2)
         
-        # Pack Button Bar at bottom first so it always remains visible
         btn_box = tk.Frame(panel_card, bg=SURFACE)
         btn_box.pack(side="bottom", fill="x", padx=10, pady=(4, 8))
         
@@ -689,7 +744,6 @@ class VisionAnalyzerView(tk.Frame):
                                        relief="flat", pady=5, cursor="hand2", command=self.trigger_autofocus)
         self.autofocus_btn.grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
-        # KPI Badges
         kpi_grid = tk.Frame(panel_card, bg=SURFACE)
         kpi_grid.pack(side="top", fill="x", padx=10, pady=(6, 2))
         kpi_grid.grid_columnconfigure(0, weight=1)
@@ -698,7 +752,6 @@ class VisionAnalyzerView(tk.Frame):
         self.kpi_package = self.create_kpi_cell(kpi_grid, "PACKAGE", "Scanning...", CYAN_ACCENT, 0, 0)
         self.kpi_part = self.create_kpi_cell(kpi_grid, "IDENTIFIED PART", "Standby", EMERALD, 0, 1)
         
-        # Result Log Viewport
         text_container = tk.Frame(panel_card, bg="#060911", highlightbackground=SURFACE_BORDER, highlightthickness=1)
         text_container.pack(side="top", fill="both", expand=True, padx=10, pady=4)
         
@@ -1137,7 +1190,7 @@ class SettingsView(tk.Frame):
         update_card.pack(fill="x", pady=4)
         
         tk.Label(update_card, text="OTA SOFTWARE REVISION", fg=TEXT_MUTED, bg=SURFACE, font=("Helvetica", 8, "bold")).pack(anchor="w")
-        tk.Label(update_card, text="SmartPin Suite OS v1.4.2 (Instant Menu RGB Reset)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
+        tk.Label(update_card, text="SmartPin Suite OS v1.5.0 (Fast Splash & Lazy Boot)", fg=TEXT_MAIN, bg=SURFACE, font=("Helvetica", 10, "bold")).pack(anchor="w", pady=(3, 6))
         
         self.update_status_lbl = tk.Label(update_card, text="Ready for sync", fg=EMERALD, bg=SURFACE, font=("Helvetica", 8, "bold"))
         self.update_status_lbl.pack(anchor="w", pady=(0, 4))
